@@ -3,6 +3,7 @@ import { z } from "zod";
 import { getSessionCookieOptions } from "./_core/cookies";
 import { systemRouter } from "./_core/systemRouter";
 import { adminProcedure, publicProcedure, router } from "./_core/trpc";
+// Import from the new NUMU data layer (with API fallback to local DB)
 import {
   getCustomers,
   getCustomerStats,
@@ -19,7 +20,7 @@ import {
   getTopMerchants,
   updateMerchantStatus,
   updateOrderStatus,
-} from "./db";
+} from "./numuDataLayer";
 
 export const appRouter = router({
   system: systemRouter,

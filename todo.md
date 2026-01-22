@@ -30,3 +30,11 @@
 - [x] Implement platform settings management
 - [x] Add admin user management
 - [x] Create system configuration options
+
+## NUMU API Integration
+- [x] Clone and analyze NUMU API repository structure
+- [x] Identify available API endpoints for merchants, orders, customers
+- [x] Create API client service for NUMU backend
+- [x] Update tRPC procedures to fetch from NUMU API
+- [x] Add API key/authentication configuration
+- [x] Test integration with real data

@@ -517,21 +517,25 @@ export async function getRevenueByMonth(months: number = 12) {
   const startDate = new Date();
   startDate.setMonth(startDate.getMonth() - months);
 
-  const result = await db
-    .select({
-      month: sql<string>`DATE_FORMAT(${orders.createdAt}, '%Y-%m')`,
-      revenue: sum(orders.total),
-      orderCount: count(),
-    })
-    .from(orders)
-    .where(and(gte(orders.createdAt, startDate), eq(orders.paymentStatus, "paid")))
-    .groupBy(sql`DATE_FORMAT(${orders.createdAt}, '%Y-%m')`)
-    .orderBy(sql`DATE_FORMAT(${orders.createdAt}, '%Y-%m')`);
+  // Use raw SQL to avoid GROUP BY issues with MySQL's ONLY_FULL_GROUP_BY mode
+  const result = await db.execute(
+    sql`SELECT 
+      DATE_FORMAT(createdAt, '%Y-%m') as month,
+      SUM(total) as revenue,
+      COUNT(*) as orderCount
+    FROM orders
+    WHERE createdAt >= ${startDate} AND paymentStatus = 'paid'
+    GROUP BY DATE_FORMAT(createdAt, '%Y-%m')
+    ORDER BY month`
+  );
 
-  return result.map((row) => ({
+  // The result is an array where first element contains the rows
+  const rows = (result as any)[0] || [];
+  
+  return rows.map((row: any) => ({
     month: row.month,
     revenue: Number(row.revenue ?? 0),
-    orders: row.orderCount,
+    orders: Number(row.orderCount ?? 0),
   }));
 }
 

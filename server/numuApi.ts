@@ -1,0 +1,472 @@
+/**
+ * NUMU API Client Service
+ * 
+ * This service provides a typed interface to communicate with the NUMU backend API.
+ * It handles authentication, request/response mapping, and error handling.
+ */
+
+import axios, { AxiosInstance, AxiosError } from "axios";
+import { ENV } from "./_core/env";
+
+// ============================================================================
+// Types - Matching NUMU API Models
+// ============================================================================
+
+export interface NuMUTenant {
+  id: string;
+  name: string;
+  subdomain: string;
+  owner_id: string | null;
+  plan: "free" | "starter" | "pro" | "enterprise";
+  is_active: boolean;
+  settings: Record<string, unknown> | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface NuMUStore {
+  id: string;
+  tenant_id: string;
+  name: string;
+  slug: string;
+  owner_id: string;
+  description: string | null;
+  logo_url: string | null;
+  banner_url: string | null;
+  status: "pending_approval" | "active" | "inactive" | "suspended";
+  default_currency: string;
+  contact_email: string | null;
+  contact_phone: string | null;
+  address: Record<string, unknown> | null;
+  social_links: Record<string, unknown> | null;
+  settings: Record<string, unknown> | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface NuMUProduct {
+  id: string;
+  tenant_id: string;
+  store_id: string;
+  name: string;
+  slug: string;
+  sku: string | null;
+  description: string | null;
+  short_description: string | null;
+  product_type: "physical" | "digital" | "service";
+  status: "draft" | "active" | "archived";
+  price_amount: number; // in cents
+  price_currency: string;
+  compare_at_price: number | null;
+  cost_price: number | null;
+  quantity: number;
+  low_stock_threshold: number;
+  weight: number | null;
+  dimensions: Record<string, unknown> | null;
+  images: string[] | null;
+  category_id: string | null;
+  tags: string[] | null;
+  attributes: Record<string, unknown> | null;
+  extra_data: Record<string, unknown> | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface NuMUCustomer {
+  id: string;
+  tenant_id: string;
+  store_id: string;
+  user_id: string | null;
+  email: string;
+  first_name: string;
+  last_name: string;
+  phone: string | null;
+  accepts_marketing: boolean;
+  notes: string | null;
+  tags: string[] | null;
+  default_address_id: string | null;
+  total_orders: number;
+  total_spent: number; // in cents
+  extra_data: Record<string, unknown> | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface NuMUOrder {
+  id: string;
+  tenant_id: string;
+  store_id: string;
+  customer_id: string;
+  order_number: string;
+  status: "pending" | "confirmed" | "processing" | "shipped" | "delivered" | "cancelled" | "refunded";
+  payment_status: "pending" | "paid" | "failed" | "refunded" | "partially_refunded";
+  fulfillment_status: "unfulfilled" | "partially_fulfilled" | "fulfilled";
+  line_items: Array<{
+    product_id: string;
+    name: string;
+    quantity: number;
+    price: number;
+    total: number;
+  }>;
+  shipping_address: Record<string, unknown>;
+  billing_address: Record<string, unknown> | null;
+  subtotal: number; // in cents
+  shipping_cost: number;
+  tax_amount: number;
+  discount_amount: number;
+  total: number;
+  currency: string;
+  payment_method: string | null;
+  payment_id: string | null;
+  shipping_method: string | null;
+  tracking_number: string | null;
+  notes: string | null;
+  customer_notes: string | null;
+  extra_data: Record<string, unknown> | null;
+  cancelled_at: string | null;
+  paid_at: string | null;
+  fulfilled_at: string | null;
+  created_at: string;
+  updated_at: string;
+  // Joined data
+  customer?: NuMUCustomer;
+  store?: NuMUStore;
+}
+
+export interface NuMUUser {
+  id: string;
+  email: string;
+  first_name: string;
+  last_name: string;
+  role: "user" | "store_owner" | "admin" | "super_admin";
+  status: "active" | "inactive" | "suspended";
+  created_at: string;
+  updated_at: string;
+}
+
+// API Response Types
+interface PaginatedResponse<T> {
+  items: T[];
+  total: number;
+  page: number;
+  limit: number;
+  pages: number;
+}
+
+interface SuccessResponse<T> {
+  data: T;
+  message: string;
+}
+
+// ============================================================================
+// NUMU API Client
+// ============================================================================
+
+class NuMUApiClient {
+  private client: AxiosInstance;
+  private adminToken: string | null = null;
+
+  constructor() {
+    // Get the NUMU API URL from environment
+    const baseURL = process.env.NUMU_API_URL || "http://localhost:8000";
+    
+    this.client = axios.create({
+      baseURL,
+      timeout: 30000,
+      headers: {
+        "Content-Type": "application/json",
+      },
+    });
+
+    // Add request interceptor for authentication
+    this.client.interceptors.request.use((config) => {
+      if (this.adminToken) {
+        config.headers.Authorization = `Bearer ${this.adminToken}`;
+      }
+      return config;
+    });
+
+    // Add response interceptor for error handling
+    this.client.interceptors.response.use(
+      (response) => response,
+      (error: AxiosError) => {
+        console.error("[NUMU API Error]", {
+          url: error.config?.url,
+          method: error.config?.method,
+          status: error.response?.status,
+          data: error.response?.data,
+        });
+        throw error;
+      }
+    );
+  }
+
+  /**
+   * Set the admin authentication token
+   */
+  setAdminToken(token: string) {
+    this.adminToken = token;
+  }
+
+  /**
+   * Authenticate as admin and get JWT token
+   */
+  async authenticate(email: string, password: string): Promise<string> {
+    const response = await this.client.post<{ access_token: string }>("/api/v1/public/auth/login", {
+      email,
+      password,
+    });
+    this.adminToken = response.data.access_token;
+    return this.adminToken;
+  }
+
+  // ==========================================================================
+  // Tenants (Merchants) API
+  // ==========================================================================
+
+  /**
+   * List all tenants (admin only)
+   */
+  async listTenants(params?: {
+    skip?: number;
+    limit?: number;
+  }): Promise<NuMUTenant[]> {
+    const response = await this.client.get<NuMUTenant[]>("/api/v1/admin/tenants", {
+      params,
+    });
+    return response.data;
+  }
+
+  /**
+   * Get tenant by ID
+   */
+  async getTenant(tenantId: string): Promise<NuMUTenant> {
+    const response = await this.client.get<NuMUTenant>(`/api/v1/admin/tenants/${tenantId}`);
+    return response.data;
+  }
+
+  /**
+   * Update tenant
+   */
+  async updateTenant(tenantId: string, data: {
+    name?: string;
+    plan?: string;
+    is_active?: boolean;
+    settings?: Record<string, unknown>;
+  }): Promise<NuMUTenant> {
+    const response = await this.client.patch<NuMUTenant>(`/api/v1/admin/tenants/${tenantId}`, data);
+    return response.data;
+  }
+
+  /**
+   * Deactivate tenant
+   */
+  async deactivateTenant(tenantId: string): Promise<void> {
+    await this.client.delete(`/api/v1/admin/tenants/${tenantId}`);
+  }
+
+  // ==========================================================================
+  // Stores API
+  // ==========================================================================
+
+  /**
+   * List stores
+   */
+  async listStores(params?: {
+    page?: number;
+    limit?: number;
+    is_active?: boolean;
+  }): Promise<PaginatedResponse<NuMUStore>> {
+    const response = await this.client.get<SuccessResponse<PaginatedResponse<NuMUStore>>>("/api/v1/stores", {
+      params,
+    });
+    return response.data.data;
+  }
+
+  /**
+   * Get store by ID
+   */
+  async getStore(storeId: string): Promise<NuMUStore> {
+    const response = await this.client.get<SuccessResponse<NuMUStore>>(`/api/v1/stores/${storeId}`);
+    return response.data.data;
+  }
+
+  /**
+   * Update store status
+   */
+  async updateStore(storeId: string, data: {
+    name?: string;
+    description?: string;
+    status?: string;
+  }): Promise<NuMUStore> {
+    const response = await this.client.patch<SuccessResponse<NuMUStore>>(`/api/v1/stores/${storeId}`, data);
+    return response.data.data;
+  }
+
+  // ==========================================================================
+  // Products API
+  // ==========================================================================
+
+  /**
+   * List products
+   */
+  async listProducts(params?: {
+    store_id?: string;
+    category_id?: string;
+    page?: number;
+    limit?: number;
+    is_active?: boolean;
+    search?: string;
+  }): Promise<PaginatedResponse<NuMUProduct>> {
+    const response = await this.client.get<SuccessResponse<PaginatedResponse<NuMUProduct>>>("/api/v1/products", {
+      params,
+    });
+    return response.data.data;
+  }
+
+  /**
+   * Get product by ID
+   */
+  async getProduct(productId: string): Promise<NuMUProduct> {
+    const response = await this.client.get<SuccessResponse<NuMUProduct>>(`/api/v1/products/${productId}`);
+    return response.data.data;
+  }
+
+  // ==========================================================================
+  // Customers API (via direct database access for admin)
+  // ==========================================================================
+
+  /**
+   * List customers (requires direct DB access or admin endpoint)
+   * Note: The NUMU API may need an admin endpoint for this
+   */
+  async listCustomers(params?: {
+    store_id?: string;
+    page?: number;
+    limit?: number;
+    search?: string;
+  }): Promise<PaginatedResponse<NuMUCustomer>> {
+    // This endpoint may need to be added to NUMU API
+    const response = await this.client.get<SuccessResponse<PaginatedResponse<NuMUCustomer>>>("/api/v1/admin/customers", {
+      params,
+    });
+    return response.data.data;
+  }
+
+  // ==========================================================================
+  // Orders API (via direct database access for admin)
+  // ==========================================================================
+
+  /**
+   * List orders (requires direct DB access or admin endpoint)
+   */
+  async listOrders(params?: {
+    store_id?: string;
+    status?: string;
+    page?: number;
+    limit?: number;
+    search?: string;
+  }): Promise<PaginatedResponse<NuMUOrder>> {
+    // This endpoint may need to be added to NUMU API
+    const response = await this.client.get<SuccessResponse<PaginatedResponse<NuMUOrder>>>("/api/v1/admin/orders", {
+      params,
+    });
+    return response.data.data;
+  }
+
+  /**
+   * Get order by ID
+   */
+  async getOrder(orderId: string): Promise<NuMUOrder> {
+    const response = await this.client.get<SuccessResponse<NuMUOrder>>(`/api/v1/admin/orders/${orderId}`);
+    return response.data.data;
+  }
+
+  /**
+   * Update order status
+   */
+  async updateOrderStatus(orderId: string, status: string): Promise<NuMUOrder> {
+    const response = await this.client.patch<SuccessResponse<NuMUOrder>>(`/api/v1/admin/orders/${orderId}`, {
+      status,
+    });
+    return response.data.data;
+  }
+
+  // ==========================================================================
+  // Dashboard Stats API
+  // ==========================================================================
+
+  /**
+   * Get platform-wide statistics
+   * Note: This may need to be implemented in NUMU API
+   */
+  async getDashboardStats(): Promise<{
+    totalRevenue: number;
+    activeMerchants: number;
+    totalOrders: number;
+    totalCustomers: number;
+    revenueChange: number;
+    merchantsChange: number;
+    ordersChange: number;
+    customersChange: number;
+  }> {
+    try {
+      const response = await this.client.get<{
+        total_revenue: number;
+        active_merchants: number;
+        total_orders: number;
+        total_customers: number;
+        revenue_change: number;
+        merchants_change: number;
+        orders_change: number;
+        customers_change: number;
+      }>("/api/v1/admin/dashboard/stats");
+      
+      return {
+        totalRevenue: response.data.total_revenue,
+        activeMerchants: response.data.active_merchants,
+        totalOrders: response.data.total_orders,
+        totalCustomers: response.data.total_customers,
+        revenueChange: response.data.revenue_change,
+        merchantsChange: response.data.merchants_change,
+        ordersChange: response.data.orders_change,
+        customersChange: response.data.customers_change,
+      };
+    } catch (error) {
+      // If the endpoint doesn't exist, return zeros
+      console.warn("[NUMU API] Dashboard stats endpoint not available, using fallback");
+      return {
+        totalRevenue: 0,
+        activeMerchants: 0,
+        totalOrders: 0,
+        totalCustomers: 0,
+        revenueChange: 0,
+        merchantsChange: 0,
+        ordersChange: 0,
+        customersChange: 0,
+      };
+    }
+  }
+
+  // ==========================================================================
+  // Health Check
+  // ==========================================================================
+
+  /**
+   * Check if the NUMU API is available
+   */
+  async healthCheck(): Promise<boolean> {
+    try {
+      await this.client.get("/api/v1/public/health");
+      return true;
+    } catch {
+      return false;
+    }
+  }
+}
+
+// Export singleton instance
+export const numuApi = new NuMUApiClient();
+
+// Export class for testing
+export { NuMUApiClient };
