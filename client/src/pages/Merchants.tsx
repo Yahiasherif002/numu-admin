@@ -1,10 +1,10 @@
 /**
  * Merchants Page - NUMU Admin Dashboard
- * 
+ *
  * Features:
  * - List all merchants with search and filters
  * - View merchant details
- * - Update merchant status (active/suspended)
+ * - Update merchant status (active/pending_approval/suspended/inactive)
  * - View merchant analytics
  */
 
@@ -43,10 +43,9 @@ import {
   Building2,
   ChevronLeft,
   ChevronRight,
-  DollarSign,
+  Clock,
   ExternalLink,
   MoreHorizontal,
-  Package,
   Search,
   ShoppingCart,
   Users,
@@ -56,9 +55,16 @@ import { toast } from "sonner";
 
 const statusColors: Record<string, string> = {
   active: "bg-emerald-100 text-emerald-700",
-  pending: "bg-amber-100 text-amber-700",
+  pending_approval: "bg-amber-100 text-amber-700",
   suspended: "bg-red-100 text-red-700",
   inactive: "bg-gray-100 text-gray-700",
+};
+
+const statusLabels: Record<string, string> = {
+  active: "Active",
+  pending_approval: "Pending",
+  suspended: "Suspended",
+  inactive: "Inactive",
 };
 
 const planColors: Record<string, string> = {
@@ -115,8 +121,12 @@ export default function Merchants() {
 
   // Redirect to login if not authenticated
   if (!isAuthenticated) {
-    window.location.href = getLoginUrl();
-    return <DashboardLayoutSkeleton />;
+    const loginUrl = getLoginUrl();
+    if (loginUrl) {
+      window.location.href = loginUrl;
+      return <DashboardLayoutSkeleton />;
+    }
+    // No OAuth configured (local dev) — render page with empty data
   }
 
   const merchants = data?.merchants ?? [];
@@ -167,11 +177,11 @@ export default function Merchants() {
         </div>
         <div className="dashboard-card flex items-center gap-4">
           <div className="w-12 h-12 rounded-xl bg-amber-50 flex items-center justify-center">
-            <Package className="w-6 h-6 text-amber-600" />
+            <Clock className="w-6 h-6 text-amber-600" />
           </div>
           <div>
-            <p className="text-sm text-muted-foreground">Pending</p>
-            <p className="text-2xl font-bold text-amber-600">{stats?.pending ?? 0}</p>
+            <p className="text-sm text-muted-foreground">Pending Approval</p>
+            <p className="text-2xl font-bold text-amber-600">{stats?.pending_approval ?? 0}</p>
           </div>
         </div>
         <div className="dashboard-card flex items-center gap-4">
@@ -191,7 +201,7 @@ export default function Merchants() {
           <div className="relative flex-1">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
             <Input
-              placeholder="Search merchants by name, email, or ID..."
+              placeholder="Search merchants by name, email, or subdomain..."
               value={search}
               onChange={(e) => {
                 setSearch(e.target.value);
@@ -207,13 +217,13 @@ export default function Merchants() {
               setPage(0);
             }}
           >
-            <SelectTrigger className="w-40">
+            <SelectTrigger className="w-48">
               <SelectValue placeholder="Status" />
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="all">All Status</SelectItem>
               <SelectItem value="active">Active</SelectItem>
-              <SelectItem value="pending">Pending</SelectItem>
+              <SelectItem value="pending_approval">Pending Approval</SelectItem>
               <SelectItem value="suspended">Suspended</SelectItem>
               <SelectItem value="inactive">Inactive</SelectItem>
             </SelectContent>
@@ -281,8 +291,8 @@ export default function Merchants() {
                     )}
                   </TableCell>
                   <TableCell>
-                    <Badge className={statusColors[merchant.status]}>
-                      {merchant.status}
+                    <Badge className={statusColors[merchant.status] || "bg-gray-100 text-gray-700"}>
+                      {statusLabels[merchant.status] || merchant.status}
                     </Badge>
                   </TableCell>
                   <TableCell>
@@ -361,8 +371,9 @@ export default function Merchants() {
                 <SelectValue placeholder="Select status" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="active">Active</SelectItem>
-                <SelectItem value="pending">Pending</SelectItem>
+                <SelectItem value="active">
+                  {selectedMerchant?.status === "pending_approval" ? "Approve (Active)" : "Active"}
+                </SelectItem>
                 <SelectItem value="suspended">Suspended</SelectItem>
                 <SelectItem value="inactive">Inactive</SelectItem>
               </SelectContent>

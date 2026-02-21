@@ -94,41 +94,46 @@ export interface NuMUCustomer {
 
 export interface NuMUOrder {
   id: string;
-  tenant_id: string;
+  tenant_id?: string;
   store_id: string;
   customer_id: string;
   order_number: string;
   status: "pending" | "confirmed" | "processing" | "shipped" | "delivered" | "cancelled" | "refunded";
   payment_status: "pending" | "paid" | "failed" | "refunded" | "partially_refunded";
   fulfillment_status: "unfulfilled" | "partially_fulfilled" | "fulfilled";
-  line_items: Array<{
+  line_items?: Array<{
     product_id: string;
-    name: string;
+    product_name: string;
     quantity: number;
-    price: number;
-    total: number;
+    unit_price: number;
+    total_price: number;
   }>;
-  shipping_address: Record<string, unknown>;
-  billing_address: Record<string, unknown> | null;
-  subtotal: number; // in cents
-  shipping_cost: number;
-  tax_amount: number;
-  discount_amount: number;
+  shipping_address?: Record<string, unknown>;
+  billing_address?: Record<string, unknown> | null;
+  subtotal?: number; // in cents
+  shipping_cost?: number;
+  tax_amount?: number;
+  discount_amount?: number;
   total: number;
   currency: string;
   payment_method: string | null;
-  payment_id: string | null;
-  shipping_method: string | null;
-  tracking_number: string | null;
-  notes: string | null;
-  customer_notes: string | null;
-  extra_data: Record<string, unknown> | null;
-  cancelled_at: string | null;
-  paid_at: string | null;
-  fulfilled_at: string | null;
+  payment_id?: string | null;
+  shipping_method?: string | null;
+  tracking_number?: string | null;
+  notes?: string | null;
+  customer_notes?: string | null;
+  extra_data?: Record<string, unknown> | null;
+  cancelled_at?: string | null;
+  paid_at?: string | null;
+  fulfilled_at?: string | null;
   created_at: string;
   updated_at: string;
-  // Joined data
+  // Flat fields from admin list endpoint
+  customer_name?: string | null;
+  customer_email?: string | null;
+  store_name?: string | null;
+  item_count?: number;
+  // Joined data (from detail endpoint)
   customer?: NuMUCustomer;
   store?: NuMUStore;
 }
@@ -144,13 +149,13 @@ export interface NuMUUser {
   updated_at: string;
 }
 
-// API Response Types
+// API Response Types (field names match NUMU-api PaginatedListResponse)
 interface PaginatedResponse<T> {
   items: T[];
   total: number;
   page: number;
-  limit: number;
-  pages: number;
+  page_size: number;
+  total_pages: number;
 }
 
 interface SuccessResponse<T> {
@@ -212,11 +217,11 @@ class NuMUApiClient {
    * Authenticate as admin and get JWT token
    */
   async authenticate(email: string, password: string): Promise<string> {
-    const response = await this.client.post<{ access_token: string }>("/api/v1/public/auth/login", {
+    const response = await this.client.post<SuccessResponse<{ tokens: { access_token: string } }>>("/api/v1/auth/login", {
       email,
       password,
     });
-    this.adminToken = response.data.access_token;
+    this.adminToken = response.data.data.tokens.access_token;
     return this.adminToken;
   }
 
@@ -308,37 +313,27 @@ class NuMUApiClient {
   // ==========================================================================
 
   /**
-   * List products
+   * List products (admin endpoint — all stores)
    */
   async listProducts(params?: {
     store_id?: string;
-    category_id?: string;
+    status?: string;
     page?: number;
     limit?: number;
-    is_active?: boolean;
     search?: string;
   }): Promise<PaginatedResponse<NuMUProduct>> {
-    const response = await this.client.get<SuccessResponse<PaginatedResponse<NuMUProduct>>>("/api/v1/products", {
+    const response = await this.client.get<SuccessResponse<PaginatedResponse<NuMUProduct>>>("/api/v1/admin/products", {
       params,
     });
     return response.data.data;
   }
 
-  /**
-   * Get product by ID
-   */
-  async getProduct(productId: string): Promise<NuMUProduct> {
-    const response = await this.client.get<SuccessResponse<NuMUProduct>>(`/api/v1/products/${productId}`);
-    return response.data.data;
-  }
-
   // ==========================================================================
-  // Customers API (via direct database access for admin)
+  // Customers API (admin endpoint)
   // ==========================================================================
 
   /**
-   * List customers (requires direct DB access or admin endpoint)
-   * Note: The NUMU API may need an admin endpoint for this
+   * List customers (admin — all stores)
    */
   async listCustomers(params?: {
     store_id?: string;
@@ -346,7 +341,6 @@ class NuMUApiClient {
     limit?: number;
     search?: string;
   }): Promise<PaginatedResponse<NuMUCustomer>> {
-    // This endpoint may need to be added to NUMU API
     const response = await this.client.get<SuccessResponse<PaginatedResponse<NuMUCustomer>>>("/api/v1/admin/customers", {
       params,
     });
@@ -354,11 +348,11 @@ class NuMUApiClient {
   }
 
   // ==========================================================================
-  // Orders API (via direct database access for admin)
+  // Orders API (admin endpoint)
   // ==========================================================================
 
   /**
-   * List orders (requires direct DB access or admin endpoint)
+   * List orders (admin — all stores)
    */
   async listOrders(params?: {
     store_id?: string;
@@ -367,7 +361,6 @@ class NuMUApiClient {
     limit?: number;
     search?: string;
   }): Promise<PaginatedResponse<NuMUOrder>> {
-    // This endpoint may need to be added to NUMU API
     const response = await this.client.get<SuccessResponse<PaginatedResponse<NuMUOrder>>>("/api/v1/admin/orders", {
       params,
     });
@@ -386,9 +379,72 @@ class NuMUApiClient {
    * Update order status
    */
   async updateOrderStatus(orderId: string, status: string): Promise<NuMUOrder> {
-    const response = await this.client.patch<SuccessResponse<NuMUOrder>>(`/api/v1/admin/orders/${orderId}`, {
+    const response = await this.client.patch<SuccessResponse<NuMUOrder>>(`/api/v1/admin/orders/${orderId}/status`, {
       status,
     });
+    return response.data.data;
+  }
+
+  // ==========================================================================
+  // Admin Store Management API
+  // ==========================================================================
+
+  /**
+   * List all stores (admin — with owner info, status filter, search)
+   */
+  async listStoresAdmin(params?: {
+    status?: string;
+    search?: string;
+    page?: number;
+    limit?: number;
+  }): Promise<PaginatedResponse<{
+    id: string;
+    name: string;
+    slug: string;
+    subdomain: string | null;
+    custom_domain: string | null;
+    status: string;
+    owner_id: string | null;
+    owner_name: string | null;
+    owner_email: string | null;
+    plan: string | null;
+    logo_url: string | null;
+    created_at: string;
+  }>> {
+    const response = await this.client.get<SuccessResponse<PaginatedResponse<any>>>("/api/v1/admin/stores", {
+      params,
+    });
+    return response.data.data;
+  }
+
+  /**
+   * Update store status (admin — approve, suspend, activate, deactivate)
+   */
+  async updateStoreStatus(storeId: string, status: string, reason?: string): Promise<{ id: string; status: string }> {
+    const response = await this.client.patch<SuccessResponse<{ id: string; status: string }>>(`/api/v1/admin/stores/${storeId}/status`, {
+      status,
+      reason,
+    });
+    return response.data.data;
+  }
+
+  /**
+   * Get store statistics (admin)
+   */
+  async getStoreStats(): Promise<{
+    total: number;
+    active: number;
+    pending_approval: number;
+    suspended: number;
+    inactive: number;
+  }> {
+    const response = await this.client.get<SuccessResponse<{
+      total: number;
+      active: number;
+      pending_approval: number;
+      suspended: number;
+      inactive: number;
+    }>>("/api/v1/admin/stores/stats");
     return response.data.data;
   }
 
@@ -398,7 +454,6 @@ class NuMUApiClient {
 
   /**
    * Get platform-wide statistics
-   * Note: This may need to be implemented in NUMU API
    */
   async getDashboardStats(): Promise<{
     totalRevenue: number;
@@ -411,7 +466,7 @@ class NuMUApiClient {
     customersChange: number;
   }> {
     try {
-      const response = await this.client.get<{
+      const response = await this.client.get<SuccessResponse<{
         total_revenue: number;
         active_merchants: number;
         total_orders: number;
@@ -420,17 +475,18 @@ class NuMUApiClient {
         merchants_change: number;
         orders_change: number;
         customers_change: number;
-      }>("/api/v1/admin/dashboard/stats");
-      
+      }>>("/api/v1/admin/dashboard/stats");
+
+      const d = response.data.data;
       return {
-        totalRevenue: response.data.total_revenue,
-        activeMerchants: response.data.active_merchants,
-        totalOrders: response.data.total_orders,
-        totalCustomers: response.data.total_customers,
-        revenueChange: response.data.revenue_change,
-        merchantsChange: response.data.merchants_change,
-        ordersChange: response.data.orders_change,
-        customersChange: response.data.customers_change,
+        totalRevenue: d.total_revenue,
+        activeMerchants: d.active_merchants,
+        totalOrders: d.total_orders,
+        totalCustomers: d.total_customers,
+        revenueChange: d.revenue_change,
+        merchantsChange: d.merchants_change,
+        ordersChange: d.orders_change,
+        customersChange: d.customers_change,
       };
     } catch (error) {
       // If the endpoint doesn't exist, return zeros
@@ -457,7 +513,7 @@ class NuMUApiClient {
    */
   async healthCheck(): Promise<boolean> {
     try {
-      await this.client.get("/api/v1/public/health");
+      await this.client.get("/api/v1/health");
       return true;
     } catch {
       return false;

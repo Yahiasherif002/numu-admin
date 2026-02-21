@@ -66,8 +66,12 @@ export default function Settings() {
 
   // Redirect to login if not authenticated
   if (!isAuthenticated) {
-    window.location.href = getLoginUrl();
-    return <DashboardLayoutSkeleton />;
+    const loginUrl = getLoginUrl();
+    if (loginUrl) {
+      window.location.href = loginUrl;
+      return <DashboardLayoutSkeleton />;
+    }
+    // No OAuth configured (local dev) — render page with empty data
   }
 
   const handleSave = async () => {

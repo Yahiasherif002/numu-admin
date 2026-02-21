@@ -1,6 +1,10 @@
-import { COOKIE_NAME } from "@shared/const";
+import { COOKIE_NAME, ONE_YEAR_MS } from "@shared/const";
+import axios from "axios";
 import { z } from "zod";
+import { TRPCError } from "@trpc/server";
+import * as db from "./db";
 import { getSessionCookieOptions } from "./_core/cookies";
+import { sdk } from "./_core/sdk";
 import { systemRouter } from "./_core/systemRouter";
 import { adminProcedure, publicProcedure, router } from "./_core/trpc";
 // Import from the new NUMU data layer (with API fallback to local DB)
@@ -27,6 +31,70 @@ export const appRouter = router({
   
   auth: router({
     me: publicProcedure.query((opts) => opts.ctx.user),
+
+    login: publicProcedure
+      .input(z.object({ email: z.string().email(), password: z.string().min(1) }))
+      .mutation(async ({ input, ctx }) => {
+        const numuApiUrl = process.env.NUMU_API_URL;
+
+        // Dev bypass: no real backend configured — issue a local admin session
+        if (!numuApiUrl) {
+          const sessionToken = await sdk.createSessionToken("dev-admin-local", {
+            name: "Dev Admin",
+            expiresInMs: ONE_YEAR_MS,
+          });
+          const cookieOptions = getSessionCookieOptions(ctx.req);
+          ctx.res.cookie(COOKIE_NAME, sessionToken, { ...cookieOptions, maxAge: ONE_YEAR_MS });
+          return { success: true as const, name: "Dev Admin", email: input.email, role: "admin" };
+        }
+
+        try {
+          const res = await axios.post(`${numuApiUrl}/api/v1/auth/login`, {
+            email: input.email,
+            password: input.password,
+          });
+          const user = res.data?.data?.user;
+          if (!user) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Invalid response from NUMU API" });
+
+          const allowedRoles = ["admin", "super_admin", "ADMIN", "SUPER_ADMIN"];
+          if (!allowedRoles.includes(user.role)) {
+            throw new TRPCError({ code: "FORBIDDEN", message: "Admin access required" });
+          }
+
+          // Sync user into local admin DB (best-effort — skip if DB unavailable)
+          try {
+            await db.upsertUser({
+              openId: user.id,
+              name: user.full_name ?? user.name ?? null,
+              email: user.email ?? null,
+              loginMethod: "email",
+              lastSignedIn: new Date(),
+            });
+          } catch (dbErr) {
+            console.warn("[Auth] Could not sync user to local DB (non-fatal):", dbErr);
+          }
+
+          const sessionToken = await sdk.createSessionToken(user.id, {
+            name: user.full_name ?? user.name ?? "",
+            expiresInMs: ONE_YEAR_MS,
+          });
+          const cookieOptions = getSessionCookieOptions(ctx.req);
+          ctx.res.cookie(COOKIE_NAME, sessionToken, { ...cookieOptions, maxAge: ONE_YEAR_MS });
+
+          return { success: true as const, name: user.full_name ?? user.name ?? "", email: user.email, role: user.role };
+        } catch (e: unknown) {
+          if (e instanceof TRPCError) throw e;
+          const err = e as { response?: { status?: number; data?: unknown }; message?: string };
+          const status = err?.response?.status;
+          console.error("[Auth] Login error — status:", status, "message:", err?.message, "response:", err?.response?.data);
+          if (status === 401 || status === 400 || status === 422) {
+            throw new TRPCError({ code: "UNAUTHORIZED", message: "Invalid email or password" });
+          }
+          const detail = err?.message ?? "unknown error";
+          throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: `Login failed: ${detail}` });
+        }
+      }),
+
     logout: publicProcedure.mutation(({ ctx }) => {
       const cookieOptions = getSessionCookieOptions(ctx.req);
       ctx.res.clearCookie(COOKIE_NAME, { ...cookieOptions, maxAge: -1 });
@@ -72,7 +140,7 @@ export const appRouter = router({
         z.object({
           limit: z.number().min(1).max(100).default(20),
           offset: z.number().min(0).default(0),
-          status: z.enum(["active", "pending", "suspended", "inactive"]).optional(),
+          status: z.enum(["active", "pending_approval", "suspended", "inactive"]).optional(),
           search: z.string().optional(),
         }).optional()
       )
@@ -95,11 +163,12 @@ export const appRouter = router({
       .input(
         z.object({
           merchantId: z.string(),
-          status: z.enum(["active", "pending", "suspended", "inactive"]),
+          status: z.enum(["active", "pending_approval", "suspended", "inactive"]),
+          reason: z.string().optional(),
         })
       )
       .mutation(async ({ input }) => {
-        return updateMerchantStatus(input.merchantId, input.status);
+        return updateMerchantStatus(input.merchantId, input.status, input.reason);
       }),
 
     stats: adminProcedure.query(async () => {

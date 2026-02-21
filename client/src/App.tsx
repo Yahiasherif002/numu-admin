@@ -1,15 +1,19 @@
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import NotFound from "@/pages/NotFound";
-import { Route, Switch } from "wouter";
+import { useEffect } from "react";
+import { Route, Switch, useLocation } from "wouter";
 import ErrorBoundary from "./components/ErrorBoundary";
+import { DashboardLayoutSkeleton } from "./components/DashboardLayoutSkeleton";
 import { ThemeProvider } from "./contexts/ThemeContext";
+import { useAuth } from "./_core/hooks/useAuth";
+import { getLoginUrl } from "./const";
 import Customers from "./pages/Customers";
 import Home from "./pages/Home";
+import Login from "./pages/Login";
 import Merchants from "./pages/Merchants";
 import Orders from "./pages/Orders";
 import Settings from "./pages/Settings";
-import { toast } from "sonner";
 
 // Placeholder page for features not yet implemented
 function ComingSoon({ title }: { title: string }) {
@@ -23,23 +27,46 @@ function ComingSoon({ title }: { title: string }) {
   );
 }
 
+/**
+ * Wraps a page component with auth protection.
+ * - While loading: shows skeleton
+ * - Unauthenticated + OAuth configured: redirect to external OAuth
+ * - Unauthenticated + no OAuth (dev mode): redirect to /login
+ * - Authenticated: render the page
+ */
+function ProtectedRoute({ component: Component }: { component: React.ComponentType }) {
+  const { isAuthenticated, loading } = useAuth();
+  const [, navigate] = useLocation();
+
+  useEffect(() => {
+    if (loading) return;
+    if (isAuthenticated) return;
+
+    const oauthUrl = getLoginUrl();
+    if (oauthUrl) {
+      window.location.href = oauthUrl;
+    } else {
+      navigate("/login");
+    }
+  }, [loading, isAuthenticated, navigate]);
+
+  if (loading || !isAuthenticated) return <DashboardLayoutSkeleton />;
+
+  return <Component />;
+}
+
 function Router() {
   return (
     <Switch>
-      <Route path="/" component={Home} />
-      <Route path="/merchants" component={Merchants} />
-      <Route path="/orders" component={Orders} />
-      <Route path="/customers" component={Customers} />
-      <Route path="/analytics">
-        {() => <ComingSoon title="Analytics" />}
-      </Route>
-      <Route path="/billing">
-        {() => <ComingSoon title="Billing" />}
-      </Route>
-      <Route path="/reports">
-        {() => <ComingSoon title="Reports" />}
-      </Route>
-      <Route path="/settings" component={Settings} />
+      <Route path="/login" component={Login} />
+      <Route path="/">{() => <ProtectedRoute component={Home} />}</Route>
+      <Route path="/merchants">{() => <ProtectedRoute component={Merchants} />}</Route>
+      <Route path="/orders">{() => <ProtectedRoute component={Orders} />}</Route>
+      <Route path="/customers">{() => <ProtectedRoute component={Customers} />}</Route>
+      <Route path="/analytics">{() => <ProtectedRoute component={() => <ComingSoon title="Analytics" />} />}</Route>
+      <Route path="/billing">{() => <ProtectedRoute component={() => <ComingSoon title="Billing" />} />}</Route>
+      <Route path="/reports">{() => <ProtectedRoute component={() => <ComingSoon title="Reports" />} />}</Route>
+      <Route path="/settings">{() => <ProtectedRoute component={Settings} />}</Route>
       <Route path="/404" component={NotFound} />
       <Route component={NotFound} />
     </Switch>

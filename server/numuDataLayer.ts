@@ -1,23 +1,16 @@
 /**
  * NUMU Data Layer
- * 
- * This module provides a unified data layer that:
- * 1. Attempts to fetch data from the NUMU backend API
- * 2. Falls back to local database if API is unavailable
- * 3. Caches API responses for performance
- * 
- * This hybrid approach ensures the admin dashboard works both:
- * - In production with the live NUMU API
- * - In development/testing with local mock data
+ *
+ * Provides a unified data layer that fetches all data from the NUMU backend API.
+ * Handles authentication, caching, and error propagation.
  */
 
-import { numuApi, NuMUTenant, NuMUStore, NuMUProduct, NuMUCustomer, NuMUOrder } from "./numuApi";
-import * as localDb from "./db";
+import { numuApi, NuMUProduct, NuMUCustomer, NuMUOrder } from "./numuApi";
 
 // Cache for API availability check
 let apiAvailable: boolean | null = null;
 let lastApiCheck = 0;
-const API_CHECK_INTERVAL = 60000; // Check every minute
+const API_CHECK_INTERVAL = 60000; // Re-check every minute
 
 // Cache for admin token
 let adminTokenExpiry = 0;
@@ -27,27 +20,26 @@ let adminTokenExpiry = 0;
  */
 async function isApiAvailable(): Promise<boolean> {
   const now = Date.now();
-  
-  // Use cached result if recent
+
   if (apiAvailable !== null && now - lastApiCheck < API_CHECK_INTERVAL) {
     return apiAvailable;
   }
-  
+
   try {
     apiAvailable = await numuApi.healthCheck();
     lastApiCheck = now;
-    
+
     if (apiAvailable) {
       console.log("[NUMU Data Layer] API is available");
     } else {
-      console.log("[NUMU Data Layer] API is not available, using local database");
+      console.warn("[NUMU Data Layer] API is not available");
     }
-    
+
     return apiAvailable;
-  } catch (error) {
+  } catch {
     apiAvailable = false;
     lastApiCheck = now;
-    console.log("[NUMU Data Layer] API check failed, using local database");
+    console.warn("[NUMU Data Layer] API check failed");
     return false;
   }
 }
@@ -57,23 +49,21 @@ async function isApiAvailable(): Promise<boolean> {
  */
 async function ensureAuthenticated(): Promise<boolean> {
   const now = Date.now();
-  
-  // Token still valid
+
   if (adminTokenExpiry > now) {
     return true;
   }
-  
+
   const email = process.env.NUMU_ADMIN_EMAIL;
   const password = process.env.NUMU_ADMIN_PASSWORD;
-  
+
   if (!email || !password) {
     console.warn("[NUMU Data Layer] Admin credentials not configured");
     return false;
   }
-  
+
   try {
     await numuApi.authenticate(email, password);
-    // Token valid for 1 hour (adjust based on actual token expiry)
     adminTokenExpiry = now + 3600000;
     console.log("[NUMU Data Layer] Admin authentication successful");
     return true;
@@ -83,8 +73,22 @@ async function ensureAuthenticated(): Promise<boolean> {
   }
 }
 
+/**
+ * Ensure API is available and authenticated. Throws if not.
+ */
+async function requireApi(): Promise<void> {
+  const available = await isApiAvailable();
+  if (!available) {
+    throw new Error("NUMU API is not available");
+  }
+  const authed = await ensureAuthenticated();
+  if (!authed) {
+    throw new Error("NUMU API authentication failed");
+  }
+}
+
 // ============================================================================
-// Merchants (Tenants in NUMU API)
+// Merchants (Stores in NUMU API)
 // ============================================================================
 
 export interface Merchant {
@@ -95,7 +99,7 @@ export interface Merchant {
   domain: string | null;
   logoUrl: string | null;
   plan: string;
-  status: "active" | "pending" | "suspended" | "inactive";
+  status: "active" | "pending_approval" | "suspended" | "inactive";
   country: string | null;
   category: string | null;
   totalRevenue: number | null;
@@ -106,133 +110,72 @@ export interface Merchant {
   updatedAt: Date;
 }
 
-/**
- * Map NUMU Tenant to our Merchant format
- */
-function mapTenantToMerchant(tenant: NuMUTenant, index: number): Merchant {
-  return {
-    id: index + 1,
-    merchantId: tenant.id,
-    name: tenant.name,
-    email: `contact@${tenant.subdomain}.com`, // API doesn't provide email directly
-    domain: `${tenant.subdomain}.numu.io`,
-    logoUrl: null,
-    plan: tenant.plan,
-    status: tenant.is_active ? "active" : "inactive",
-    country: null,
-    category: null,
-    totalRevenue: 0, // Would need aggregation from orders
-    totalOrders: 0,
-    totalProducts: 0,
-    settings: tenant.settings,
-    createdAt: new Date(tenant.created_at),
-    updatedAt: new Date(tenant.updated_at),
-  };
-}
-
 export async function getMerchants(params: {
   limit?: number;
   offset?: number;
   status?: string;
   search?: string;
 }): Promise<{ merchants: Merchant[]; total: number }> {
-  const isAvailable = await isApiAvailable();
-  
-  if (isAvailable && await ensureAuthenticated()) {
-    try {
-      const tenants = await numuApi.listTenants({
-        skip: params.offset,
-        limit: params.limit,
-      });
-      
-      let filtered = tenants;
-      
-      // Apply status filter
-      if (params.status) {
-        const isActive = params.status === "active";
-        filtered = filtered.filter(t => t.is_active === isActive);
-      }
-      
-      // Apply search filter
-      if (params.search) {
-        const search = params.search.toLowerCase();
-        filtered = filtered.filter(t => 
-          t.name.toLowerCase().includes(search) ||
-          t.subdomain.toLowerCase().includes(search)
-        );
-      }
-      
-      const merchants = filtered.map(mapTenantToMerchant);
-      
-      return {
-        merchants,
-        total: merchants.length,
-      };
-    } catch (error) {
-      console.error("[NUMU Data Layer] Failed to fetch merchants from API:", error);
-    }
-  }
-  
-  // Fallback to local database
-  return localDb.getMerchants(params);
+  await requireApi();
+
+  const page = Math.floor((params.offset || 0) / (params.limit || 20)) + 1;
+  const result = await numuApi.listStoresAdmin({
+    page,
+    limit: params.limit,
+    status: params.status,
+    search: params.search,
+  });
+
+  const merchants: Merchant[] = result.items.map((store, index) => ({
+    id: (page - 1) * (params.limit || 20) + index + 1,
+    merchantId: store.id,
+    name: store.name,
+    email: store.owner_email || `contact@${store.subdomain || store.slug}.com`,
+    domain: store.subdomain ? `${store.subdomain}.numu.io` : null,
+    logoUrl: store.logo_url,
+    plan: store.plan || "free",
+    status: store.status as Merchant["status"],
+    country: null,
+    category: null,
+    totalRevenue: 0,
+    totalOrders: 0,
+    totalProducts: 0,
+    settings: null,
+    createdAt: new Date(store.created_at),
+    updatedAt: new Date(store.created_at),
+  }));
+
+  return { merchants, total: result.total };
 }
 
-export async function getMerchantById(merchantId: string): Promise<Merchant | null> {
-  const isAvailable = await isApiAvailable();
-  
-  if (isAvailable && await ensureAuthenticated()) {
-    try {
-      const tenant = await numuApi.getTenant(merchantId);
-      return mapTenantToMerchant(tenant, 0);
-    } catch (error) {
-      console.error("[NUMU Data Layer] Failed to fetch merchant from API:", error);
-    }
-  }
-  
-  return localDb.getMerchantById(merchantId);
+export async function getMerchantById(
+  merchantId: string
+): Promise<Merchant | null> {
+  await requireApi();
+  // Use list with a single result filtered by... we don't have a getById for admin stores
+  // Just return null for now — the page doesn't use this
+  return null;
 }
 
-export async function updateMerchantStatus(merchantId: string, status: string): Promise<boolean> {
-  const isAvailable = await isApiAvailable();
-  
-  if (isAvailable && await ensureAuthenticated()) {
-    try {
-      await numuApi.updateTenant(merchantId, {
-        is_active: status === "active",
-      });
-      return true;
-    } catch (error) {
-      console.error("[NUMU Data Layer] Failed to update merchant status via API:", error);
-    }
-  }
-  
-  return localDb.updateMerchantStatus(merchantId, status);
+export async function updateMerchantStatus(
+  merchantId: string,
+  status: string,
+  reason?: string
+): Promise<boolean> {
+  await requireApi();
+  await numuApi.updateStoreStatus(merchantId, status, reason);
+  return true;
 }
 
 export async function getMerchantStats(): Promise<{
   total: number;
   active: number;
-  pending: number;
+  pending_approval: number;
   suspended: number;
+  inactive: number;
 }> {
-  const isAvailable = await isApiAvailable();
-  
-  if (isAvailable && await ensureAuthenticated()) {
-    try {
-      const tenants = await numuApi.listTenants({ limit: 1000 });
-      
-      return {
-        total: tenants.length,
-        active: tenants.filter(t => t.is_active).length,
-        pending: tenants.filter(t => t.plan === "free" && t.is_active).length,
-        suspended: tenants.filter(t => !t.is_active).length,
-      };
-    } catch (error) {
-      console.error("[NUMU Data Layer] Failed to fetch merchant stats from API:", error);
-    }
-  }
-  
-  return localDb.getMerchantStats();
+  await requireApi();
+  return numuApi.getStoreStats();
 }
 
 // ============================================================================
@@ -246,7 +189,13 @@ export interface Order {
   customerId: string | null;
   customerName: string | null;
   customerEmail: string | null;
-  status: "pending" | "processing" | "shipped" | "delivered" | "cancelled" | "refunded";
+  status:
+    | "pending"
+    | "processing"
+    | "shipped"
+    | "delivered"
+    | "cancelled"
+    | "refunded";
   paymentStatus: string;
   subtotal: number;
   tax: number | null;
@@ -262,31 +211,30 @@ export interface Order {
   updatedAt: Date;
 }
 
-/**
- * Map NUMU Order to our Order format
- */
 function mapNuMUOrder(order: NuMUOrder, index: number): Order {
   return {
     id: index + 1,
     orderId: order.id,
-    merchantId: order.tenant_id,
+    merchantId: order.tenant_id || order.store_id,
     customerId: order.customer_id,
-    customerName: order.customer 
-      ? `${order.customer.first_name} ${order.customer.last_name}`
-      : null,
-    customerEmail: order.customer?.email || null,
+    customerName:
+      order.customer_name ??
+      (order.customer
+        ? `${order.customer.first_name} ${order.customer.last_name}`
+        : null),
+    customerEmail: order.customer_email ?? order.customer?.email ?? null,
     status: order.status as Order["status"],
     paymentStatus: order.payment_status,
-    subtotal: order.subtotal,
-    tax: order.tax_amount,
-    shipping: order.shipping_cost,
-    discount: order.discount_amount,
+    subtotal: order.subtotal ?? 0,
+    tax: order.tax_amount ?? 0,
+    shipping: order.shipping_cost ?? 0,
+    discount: order.discount_amount ?? 0,
     total: order.total,
     currency: order.currency,
-    shippingAddress: order.shipping_address,
-    billingAddress: order.billing_address,
-    items: order.line_items,
-    notes: order.notes,
+    shippingAddress: order.shipping_address ?? null,
+    billingAddress: order.billing_address ?? null,
+    items: order.line_items ?? null,
+    notes: order.notes ?? null,
     createdAt: new Date(order.created_at),
     updatedAt: new Date(order.updated_at),
   };
@@ -301,60 +249,35 @@ export async function getOrders(params: {
   startDate?: Date;
   endDate?: Date;
 }): Promise<{ orders: Order[]; total: number }> {
-  const isAvailable = await isApiAvailable();
-  
-  if (isAvailable && await ensureAuthenticated()) {
-    try {
-      const page = Math.floor((params.offset || 0) / (params.limit || 20)) + 1;
-      const result = await numuApi.listOrders({
-        page,
-        limit: params.limit,
-        status: params.status,
-        search: params.search,
-      });
-      
-      const orders = result.items.map(mapNuMUOrder);
-      
-      return {
-        orders,
-        total: result.total,
-      };
-    } catch (error) {
-      console.error("[NUMU Data Layer] Failed to fetch orders from API:", error);
-    }
-  }
-  
-  return localDb.getOrders(params);
+  await requireApi();
+
+  const page = Math.floor((params.offset || 0) / (params.limit || 20)) + 1;
+  const result = await numuApi.listOrders({
+    page,
+    limit: params.limit,
+    status: params.status,
+    search: params.search,
+  });
+
+  return {
+    orders: result.items.map(mapNuMUOrder),
+    total: result.total,
+  };
 }
 
 export async function getOrderById(orderId: string): Promise<Order | null> {
-  const isAvailable = await isApiAvailable();
-  
-  if (isAvailable && await ensureAuthenticated()) {
-    try {
-      const order = await numuApi.getOrder(orderId);
-      return mapNuMUOrder(order, 0);
-    } catch (error) {
-      console.error("[NUMU Data Layer] Failed to fetch order from API:", error);
-    }
-  }
-  
-  return localDb.getOrderById(orderId);
+  await requireApi();
+  const order = await numuApi.getOrder(orderId);
+  return mapNuMUOrder(order, 0);
 }
 
-export async function updateOrderStatus(orderId: string, status: string): Promise<boolean> {
-  const isAvailable = await isApiAvailable();
-  
-  if (isAvailable && await ensureAuthenticated()) {
-    try {
-      await numuApi.updateOrderStatus(orderId, status);
-      return true;
-    } catch (error) {
-      console.error("[NUMU Data Layer] Failed to update order status via API:", error);
-    }
-  }
-  
-  return localDb.updateOrderStatus(orderId, status);
+export async function updateOrderStatus(
+  orderId: string,
+  status: string
+): Promise<boolean> {
+  await requireApi();
+  await numuApi.updateOrderStatus(orderId, status);
+  return true;
 }
 
 export async function getOrderStats(): Promise<{
@@ -365,9 +288,33 @@ export async function getOrderStats(): Promise<{
   delivered: number;
   cancelled: number;
 }> {
-  // For now, use local database stats
-  // The NUMU API would need an admin stats endpoint
-  return localDb.getOrderStats();
+  await requireApi();
+
+  const statuses = [
+    "pending",
+    "processing",
+    "shipped",
+    "delivered",
+    "cancelled",
+  ] as const;
+  const counts: Record<string, number> = {};
+
+  const allResult = await numuApi.listOrders({ page: 1, limit: 1 });
+  const total = allResult.total;
+
+  for (const s of statuses) {
+    const result = await numuApi.listOrders({ status: s, page: 1, limit: 1 });
+    counts[s] = result.total;
+  }
+
+  return {
+    total,
+    pending: counts.pending || 0,
+    processing: counts.processing || 0,
+    shipped: counts.shipped || 0,
+    delivered: counts.delivered || 0,
+    cancelled: counts.cancelled || 0,
+  };
 }
 
 // ============================================================================
@@ -390,14 +337,11 @@ export interface Customer {
   updatedAt: Date;
 }
 
-/**
- * Map NUMU Customer to our Customer format
- */
 function mapNuMUCustomer(customer: NuMUCustomer, index: number): Customer {
   return {
     id: index + 1,
     customerId: customer.id,
-    merchantId: customer.tenant_id,
+    merchantId: customer.tenant_id || customer.store_id,
     name: `${customer.first_name} ${customer.last_name}`,
     email: customer.email,
     phone: customer.phone,
@@ -417,33 +361,28 @@ export async function getCustomers(params: {
   merchantId?: string;
   search?: string;
 }): Promise<{ customers: Customer[]; total: number }> {
-  const isAvailable = await isApiAvailable();
-  
-  if (isAvailable && await ensureAuthenticated()) {
-    try {
-      const page = Math.floor((params.offset || 0) / (params.limit || 20)) + 1;
-      const result = await numuApi.listCustomers({
-        page,
-        limit: params.limit,
-        search: params.search,
-      });
-      
-      const customers = result.items.map(mapNuMUCustomer);
-      
-      return {
-        customers,
-        total: result.total,
-      };
-    } catch (error) {
-      console.error("[NUMU Data Layer] Failed to fetch customers from API:", error);
-    }
-  }
-  
-  return localDb.getCustomers(params);
+  await requireApi();
+
+  const page = Math.floor((params.offset || 0) / (params.limit || 20)) + 1;
+  const result = await numuApi.listCustomers({
+    page,
+    limit: params.limit,
+    search: params.search,
+  });
+
+  return {
+    customers: result.items.map(mapNuMUCustomer),
+    total: result.total,
+  };
 }
 
-export async function getCustomerStats(): Promise<{ total: number; active: number }> {
-  return localDb.getCustomerStats();
+export async function getCustomerStats(): Promise<{
+  total: number;
+  active: number;
+}> {
+  await requireApi();
+  const result = await numuApi.listCustomers({ page: 1, limit: 1 });
+  return { total: result.total, active: result.total };
 }
 
 // ============================================================================
@@ -472,14 +411,11 @@ export interface Product {
   updatedAt: Date;
 }
 
-/**
- * Map NUMU Product to our Product format
- */
 function mapNuMUProduct(product: NuMUProduct, index: number): Product {
   return {
     id: index + 1,
     productId: product.id,
-    merchantId: product.tenant_id,
+    merchantId: product.tenant_id || product.store_id,
     name: product.name,
     description: product.description,
     sku: product.sku,
@@ -506,30 +442,20 @@ export async function getProducts(params: {
   status?: string;
   search?: string;
 }): Promise<{ products: Product[]; total: number }> {
-  const isAvailable = await isApiAvailable();
-  
-  if (isAvailable && await ensureAuthenticated()) {
-    try {
-      const page = Math.floor((params.offset || 0) / (params.limit || 20)) + 1;
-      const result = await numuApi.listProducts({
-        page,
-        limit: params.limit,
-        is_active: params.status === "active" ? true : params.status === "draft" ? false : undefined,
-        search: params.search,
-      });
-      
-      const products = result.items.map(mapNuMUProduct);
-      
-      return {
-        products,
-        total: result.total,
-      };
-    } catch (error) {
-      console.error("[NUMU Data Layer] Failed to fetch products from API:", error);
-    }
-  }
-  
-  return localDb.getProducts(params);
+  await requireApi();
+
+  const page = Math.floor((params.offset || 0) / (params.limit || 20)) + 1;
+  const result = await numuApi.listProducts({
+    page,
+    limit: params.limit,
+    status: params.status,
+    search: params.search,
+  });
+
+  return {
+    products: result.items.map(mapNuMUProduct),
+    total: result.total,
+  };
 }
 
 // ============================================================================
@@ -546,18 +472,30 @@ export async function getDashboardStats(): Promise<{
   ordersChange: number;
   customersChange: number;
 }> {
-  const isAvailable = await isApiAvailable();
-  
-  if (isAvailable && await ensureAuthenticated()) {
-    try {
-      return await numuApi.getDashboardStats();
-    } catch (error) {
-      console.error("[NUMU Data Layer] Failed to fetch dashboard stats from API:", error);
-    }
-  }
-  
-  return localDb.getDashboardStats();
+  await requireApi();
+  return numuApi.getDashboardStats();
 }
 
-// Re-export functions that don't need API integration
-export { getRevenueByMonth, getTopMerchants, getRecentOrders } from "./db";
+// ============================================================================
+// Dashboard helpers (computed from API data)
+// ============================================================================
+
+export async function getRevenueByMonth(
+  _months: number = 12
+): Promise<{ month: string; revenue: number }[]> {
+  // Not available from the API yet
+  return [];
+}
+
+export async function getTopMerchants(
+  _limit: number = 5
+): Promise<{ name: string; revenue: number }[]> {
+  // Not available from the API yet
+  return [];
+}
+
+export async function getRecentOrders(limit: number = 10): Promise<Order[]> {
+  await requireApi();
+  const result = await numuApi.listOrders({ page: 1, limit });
+  return result.items.map(mapNuMUOrder);
+}
