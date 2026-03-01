@@ -6,7 +6,7 @@ import * as db from "./db";
 import { getSessionCookieOptions } from "./_core/cookies";
 import { sdk } from "./_core/sdk";
 import { systemRouter } from "./_core/systemRouter";
-import { adminProcedure, publicProcedure, router } from "./_core/trpc";
+import { adminProcedure, publicProcedure, router, type AdminContext } from "./_core/trpc";
 // Import from the new NUMU data layer (with API fallback to local DB)
 import {
   getCustomers,
@@ -28,9 +28,14 @@ import {
   updateOrderStatus,
 } from "./numuDataLayer";
 
+/** Helper to extract the scope from admin context on ctx. */
+function scope(ctx: { adminCtx: AdminContext }) {
+  return ctx.adminCtx.allowedMerchantIds;
+}
+
 export const appRouter = router({
   system: systemRouter,
-  
+
   auth: router({
     me: publicProcedure.query((opts) => opts.ctx.user),
 
@@ -57,6 +62,9 @@ export const appRouter = router({
             throw new TRPCError({ code: "FORBIDDEN", message: "Admin access required" });
           }
 
+          // Map NUMU API role to local DB role
+          const localRole = userRole === "super_admin" ? "super_admin" : "admin";
+
           // Sync user into local admin DB (best-effort — skip if DB unavailable)
           try {
             await db.upsertUser({
@@ -64,6 +72,7 @@ export const appRouter = router({
               name: user.full_name ?? user.name ?? null,
               email: user.email ?? null,
               loginMethod: "email",
+              role: localRole,
               lastSignedIn: new Date(),
             });
           } catch (dbErr) {
@@ -104,26 +113,26 @@ export const appRouter = router({
   // DASHBOARD (Admin Only)
   // ============================================
   dashboard: router({
-    stats: adminProcedure.query(async () => {
-      return getDashboardStats();
+    stats: adminProcedure.query(async ({ ctx }) => {
+      return getDashboardStats(scope(ctx));
     }),
-    
+
     revenueByMonth: adminProcedure
       .input(z.object({ months: z.number().min(1).max(24).default(12) }).optional())
-      .query(async ({ input }) => {
-        return getRevenueByMonth(input?.months ?? 12);
+      .query(async ({ input, ctx }) => {
+        return getRevenueByMonth(input?.months ?? 12, scope(ctx));
       }),
-    
+
     topMerchants: adminProcedure
       .input(z.object({ limit: z.number().min(1).max(20).default(5) }).optional())
-      .query(async ({ input }) => {
-        return getTopMerchants(input?.limit ?? 5);
+      .query(async ({ input, ctx }) => {
+        return getTopMerchants(input?.limit ?? 5, scope(ctx));
       }),
-    
+
     recentOrders: adminProcedure
       .input(z.object({ limit: z.number().min(1).max(50).default(10) }).optional())
-      .query(async ({ input }) => {
-        return getRecentOrders(input?.limit ?? 10);
+      .query(async ({ input, ctx }) => {
+        return getRecentOrders(input?.limit ?? 10, scope(ctx));
       }),
   }),
 
@@ -140,19 +149,19 @@ export const appRouter = router({
           search: z.string().optional(),
         }).optional()
       )
-      .query(async ({ input }) => {
+      .query(async ({ input, ctx }) => {
         return getMerchants({
           limit: input?.limit ?? 20,
           offset: input?.offset ?? 0,
           status: input?.status,
           search: input?.search,
-        });
+        }, scope(ctx));
       }),
 
     getById: adminProcedure
       .input(z.object({ merchantId: z.string() }))
-      .query(async ({ input }) => {
-        return getMerchantById(input.merchantId);
+      .query(async ({ input, ctx }) => {
+        return getMerchantById(input.merchantId, scope(ctx));
       }),
 
     updateStatus: adminProcedure
@@ -163,12 +172,12 @@ export const appRouter = router({
           reason: z.string().optional(),
         })
       )
-      .mutation(async ({ input }) => {
-        return updateMerchantStatus(input.merchantId, input.status, input.reason);
+      .mutation(async ({ input, ctx }) => {
+        return updateMerchantStatus(input.merchantId, input.status, scope(ctx), input.reason);
       }),
 
-    stats: adminProcedure.query(async () => {
-      return getMerchantStats();
+    stats: adminProcedure.query(async ({ ctx }) => {
+      return getMerchantStats(scope(ctx));
     }),
   }),
 
@@ -188,7 +197,7 @@ export const appRouter = router({
           endDate: z.date().optional(),
         }).optional()
       )
-      .query(async ({ input }) => {
+      .query(async ({ input, ctx }) => {
         return getOrders({
           limit: input?.limit ?? 20,
           offset: input?.offset ?? 0,
@@ -197,13 +206,13 @@ export const appRouter = router({
           search: input?.search,
           startDate: input?.startDate,
           endDate: input?.endDate,
-        });
+        }, scope(ctx));
       }),
 
     getById: adminProcedure
       .input(z.object({ orderId: z.string() }))
-      .query(async ({ input }) => {
-        return getOrderById(input.orderId);
+      .query(async ({ input, ctx }) => {
+        return getOrderById(input.orderId, scope(ctx));
       }),
 
     updateStatus: adminProcedure
@@ -213,12 +222,12 @@ export const appRouter = router({
           status: z.enum(["pending", "processing", "shipped", "delivered", "cancelled", "refunded"]),
         })
       )
-      .mutation(async ({ input }) => {
-        return updateOrderStatus(input.orderId, input.status);
+      .mutation(async ({ input, ctx }) => {
+        return updateOrderStatus(input.orderId, input.status, scope(ctx));
       }),
 
-    stats: adminProcedure.query(async () => {
-      return getOrderStats();
+    stats: adminProcedure.query(async ({ ctx }) => {
+      return getOrderStats(scope(ctx));
     }),
   }),
 
@@ -235,17 +244,17 @@ export const appRouter = router({
           search: z.string().optional(),
         }).optional()
       )
-      .query(async ({ input }) => {
+      .query(async ({ input, ctx }) => {
         return getCustomers({
           limit: input?.limit ?? 20,
           offset: input?.offset ?? 0,
           merchantId: input?.merchantId,
           search: input?.search,
-        });
+        }, scope(ctx));
       }),
 
-    stats: adminProcedure.query(async () => {
-      return getCustomerStats();
+    stats: adminProcedure.query(async ({ ctx }) => {
+      return getCustomerStats(scope(ctx));
     }),
   }),
 
@@ -263,19 +272,19 @@ export const appRouter = router({
           search: z.string().optional(),
         }).optional()
       )
-      .query(async ({ input }) => {
+      .query(async ({ input, ctx }) => {
         return getProducts({
           limit: input?.limit ?? 20,
           offset: input?.offset ?? 0,
           merchantId: input?.merchantId,
           status: input?.status,
           search: input?.search,
-        });
+        }, scope(ctx));
       }),
   }),
 
   // ============================================
-  // LANDING PAGE CONFIG (Admin Only)
+  // LANDING PAGE CONFIG (Admin Only — platform-wide)
   // ============================================
   landingPage: router({
     getConfig: adminProcedure.query(async () => {

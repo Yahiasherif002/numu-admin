@@ -1,6 +1,8 @@
 import { and, count, desc, eq, gte, like, lte, or, sql, sum } from "drizzle-orm";
-import { drizzle } from "drizzle-orm/mysql2";
+import { drizzle } from "drizzle-orm/postgres-js";
+import postgres from "postgres";
 import {
+  adminMerchantAssignments,
   customers,
   InsertCustomer,
   InsertMerchant,
@@ -21,7 +23,8 @@ let _db: ReturnType<typeof drizzle> | null = null;
 export async function getDb() {
   if (!_db && process.env.DATABASE_URL) {
     try {
-      _db = drizzle(process.env.DATABASE_URL);
+      const client = postgres(process.env.DATABASE_URL);
+      _db = drizzle(client);
     } catch (error) {
       console.warn("[Database] Failed to connect:", error);
       _db = null;
@@ -80,11 +83,16 @@ export async function upsertUser(user: InsertUser): Promise<void> {
       values.lastSignedIn = new Date();
     }
 
-    if (Object.keys(updateSet).length === 0) {
+    // Always bump updatedAt on upsert
+    updateSet.updatedAt = new Date();
+
+    if (Object.keys(updateSet).length === 1) {
+      // Only updatedAt — also set lastSignedIn as fallback
       updateSet.lastSignedIn = new Date();
     }
 
-    await db.insert(users).values(values).onDuplicateKeyUpdate({
+    await db.insert(users).values(values).onConflictDoUpdate({
+      target: users.openId,
       set: updateSet,
     });
   } catch (error) {
@@ -109,7 +117,49 @@ export async function getAllAdmins() {
   const db = await getDb();
   if (!db) return [];
 
-  return db.select().from(users).where(eq(users.role, "admin"));
+  return db.select().from(users).where(
+    or(eq(users.role, "admin"), eq(users.role, "super_admin"))
+  );
+}
+
+// ============================================
+// ADMIN MERCHANT ASSIGNMENTS
+// ============================================
+
+export async function getMerchantAssignments(adminId: number): Promise<string[]> {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available — cannot resolve merchant assignments");
+
+  const rows = await db
+    .select({ merchantId: adminMerchantAssignments.merchantId })
+    .from(adminMerchantAssignments)
+    .where(eq(adminMerchantAssignments.adminId, adminId));
+
+  return rows.map((r) => r.merchantId);
+}
+
+export async function assignMerchant(adminId: number, merchantId: string): Promise<void> {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  await db
+    .insert(adminMerchantAssignments)
+    .values({ adminId, merchantId })
+    .onConflictDoNothing();
+}
+
+export async function unassignMerchant(adminId: number, merchantId: string): Promise<void> {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  await db
+    .delete(adminMerchantAssignments)
+    .where(
+      and(
+        eq(adminMerchantAssignments.adminId, adminId),
+        eq(adminMerchantAssignments.merchantId, merchantId)
+      )
+    );
 }
 
 // ============================================
@@ -182,7 +232,7 @@ export async function updateMerchantStatus(merchantId: string, status: string) {
 
   await db
     .update(merchants)
-    .set({ status: status as any })
+    .set({ status: status as any, updatedAt: new Date() })
     .where(eq(merchants.merchantId, merchantId));
 
   return true;
@@ -291,7 +341,7 @@ export async function updateOrderStatus(orderId: string, status: string) {
 
   await db
     .update(orders)
-    .set({ status: status as any })
+    .set({ status: status as any, updatedAt: new Date() })
     .where(eq(orders.orderId, orderId));
 
   return true;
@@ -456,12 +506,10 @@ export async function getDashboardStats() {
     };
   }
 
-  // Get current period stats
   const now = new Date();
   const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
   const sixtyDaysAgo = new Date(now.getTime() - 60 * 24 * 60 * 60 * 1000);
 
-  // Current period
   const [revenueResult, merchantsResult, ordersResult, customersResult] = await Promise.all([
     db
       .select({ total: sum(orders.total) })
@@ -472,7 +520,6 @@ export async function getDashboardStats() {
     db.select({ count: count() }).from(customers),
   ]);
 
-  // Previous period for comparison
   const [prevRevenueResult, prevOrdersResult] = await Promise.all([
     db
       .select({ total: sum(orders.total) })
@@ -504,9 +551,9 @@ export async function getDashboardStats() {
     totalOrders: currentOrders,
     totalCustomers: customersResult[0]?.count ?? 0,
     revenueChange: Math.round(revenueChange * 10) / 10,
-    merchantsChange: 8.2, // Placeholder - would need historical data
+    merchantsChange: 0,
     ordersChange: Math.round(ordersChange * 10) / 10,
-    customersChange: 5.7, // Placeholder - would need historical data
+    customersChange: 0,
   };
 }
 
@@ -517,25 +564,21 @@ export async function getRevenueByMonth(months: number = 12) {
   const startDate = new Date();
   startDate.setMonth(startDate.getMonth() - months);
 
-  // Use raw SQL to avoid GROUP BY issues with MySQL's ONLY_FULL_GROUP_BY mode
   const result = await db.execute(
-    sql`SELECT 
-      DATE_FORMAT(createdAt, '%Y-%m') as month,
+    sql`SELECT
+      TO_CHAR(created_at, 'YYYY-MM') as month,
       SUM(total) as revenue,
-      COUNT(*) as orderCount
-    FROM orders
-    WHERE createdAt >= ${startDate} AND paymentStatus = 'paid'
-    GROUP BY DATE_FORMAT(createdAt, '%Y-%m')
+      COUNT(*) as order_count
+    FROM admin_orders
+    WHERE created_at >= ${startDate} AND payment_status = 'paid'
+    GROUP BY TO_CHAR(created_at, 'YYYY-MM')
     ORDER BY month`
   );
 
-  // The result is an array where first element contains the rows
-  const rows = (result as any)[0] || [];
-  
-  return rows.map((row: any) => ({
+  return result.map((row: any) => ({
     month: row.month,
     revenue: Number(row.revenue ?? 0),
-    orders: Number(row.orderCount ?? 0),
+    orders: Number(row.order_count ?? 0),
   }));
 }
 
