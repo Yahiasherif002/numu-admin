@@ -1,9 +1,7 @@
 /**
  * Login Page — NUMU Admin Backoffice
  *
- * Supports two flows:
- *  1. Email/password auth via the NUMU API (production)
- *  2. One-click dev-admin bypass when VITE_OAUTH_PORTAL_URL is not set (local dev)
+ * Email/password auth via the NUMU API.
  */
 
 import { Button } from "@/components/ui/button";
@@ -11,11 +9,9 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { trpc } from "@/lib/trpc";
 import { TRPCClientError } from "@trpc/client";
-import { Eye, EyeOff, Loader2, ShieldCheck, Zap } from "lucide-react";
+import { Eye, EyeOff, Loader2, ShieldCheck } from "lucide-react";
 import { useState } from "react";
 import { useLocation } from "wouter";
-
-const isDevMode = !import.meta.env.VITE_OAUTH_PORTAL_URL;
 
 export default function Login() {
   const [, navigate] = useLocation();
@@ -46,11 +42,6 @@ export default function Login() {
     loginMutation.mutate({ email, password });
   };
 
-  const handleDevLogin = () => {
-    setError(null);
-    loginMutation.mutate({ email: "dev@admin.local", password: "dev" });
-  };
-
   return (
     <div className="min-h-screen bg-background flex items-center justify-center p-4">
       <div className="w-full max-w-sm space-y-8">
@@ -66,33 +57,6 @@ export default function Login() {
             Sign in to access the backoffice
           </p>
         </div>
-
-        {/* Dev-mode banner */}
-        {isDevMode && (
-          <div className="rounded-xl border border-amber-200 bg-amber-50 dark:bg-amber-950/20 dark:border-amber-800 p-4 space-y-3">
-            <div className="flex items-center gap-2 text-amber-700 dark:text-amber-400">
-              <Zap size={16} />
-              <span className="text-sm font-medium">Local development mode</span>
-            </div>
-            <p className="text-xs text-amber-600 dark:text-amber-500">
-              OAuth is not configured. Use the button below to sign in as a dev admin, or enter NUMU API credentials above.
-            </p>
-            <Button
-              type="button"
-              variant="outline"
-              className="w-full border-amber-300 text-amber-700 hover:bg-amber-100 dark:border-amber-700 dark:text-amber-400 dark:hover:bg-amber-950"
-              onClick={handleDevLogin}
-              disabled={loginMutation.isPending}
-            >
-              {loginMutation.isPending ? (
-                <Loader2 size={16} className="animate-spin mr-2" />
-              ) : (
-                <Zap size={16} className="mr-2" />
-              )}
-              Continue as Dev Admin
-            </Button>
-          </div>
-        )}
 
         {/* Login form */}
         <form onSubmit={handleSubmit} className="space-y-4">
@@ -122,7 +86,7 @@ export default function Login() {
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 disabled={loginMutation.isPending}
-                className="pr-10"
+                className="pr-10 [&::-ms-reveal]:hidden"
               />
               <button
                 type="button"

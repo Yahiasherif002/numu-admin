@@ -1,6 +1,6 @@
 {
-  "id": "aa7977d7-5b96-406e-9717-3b4c3e62966c",
-  "prevId": "bd58b86d-35eb-458d-852f-4af2a9772b41",
+  "id": "43f9cff5-dd09-4f66-9e58-e4cd6ff7ccaa",
+  "prevId": "aa7977d7-5b96-406e-9717-3b4c3e62966c",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -508,6 +508,21 @@
           "columns": [
             {
               "expression": "merchant_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "orders_customer_id_idx": {
+          "name": "orders_customer_id_idx",
+          "columns": [
+            {
+              "expression": "customer_id",
               "isExpression": false,
               "asc": true,
               "nulls": "last"

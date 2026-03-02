@@ -2,40 +2,78 @@
  * NUMU Data Layer
  *
  * Provides a unified data layer that fetches all data from the NUMU backend API.
- * Handles authentication, caching, and error propagation.
+ * Handles authentication, caching, error propagation, and tenant scoping.
+ *
+ * Every data function accepts a `scope` parameter:
+ *   - "all"       → super_admin, no filtering
+ *   - string[]    → scoped admin, only return data for these merchant/store IDs
  */
 
 import { TRPCError } from "@trpc/server";
 import { numuApi, NuMUProduct, NuMUCustomer, NuMUOrder } from "./numuApi";
 
-// Cache for API availability check
-let apiAvailable: boolean | null = null;
-let lastApiCheck = 0;
-const API_CHECK_INTERVAL = 60000; // Re-check every minute
+// ============================================================================
+// Tenant Scoping Helpers
+// ============================================================================
 
-// Cache for admin token
-let adminTokenExpiry = 0;
+export type ScopeFilter = string[] | "all";
+
+function isAllowed(merchantId: string, scope: ScopeFilter): boolean {
+  return scope === "all" || scope.includes(merchantId);
+}
 
 /**
- * Check if the NUMU API is available
+ * Returns a single store_id to pass to the API when the scope is exactly 1 store,
+ * or undefined when the scope is "all" or multi-store (in which case we filter in-memory).
  */
+function singleStoreId(scope: ScopeFilter): string | undefined {
+  return Array.isArray(scope) && scope.length === 1 ? scope[0] : undefined;
+}
+
+/**
+ * Fetches all pages from a paginated NUMU API endpoint.
+ * Used by scoped-admin stats to avoid the 200-item cap.
+ * Caps at MAX_PAGES to prevent runaway requests.
+ */
+const MAX_PAGES = 10;
+const PAGE_SIZE = 100;
+
+async function fetchAllPages<T>(
+  fetcher: (page: number, limit: number) => Promise<{ items: T[]; total: number; total_pages: number }>,
+): Promise<T[]> {
+  const first = await fetcher(1, PAGE_SIZE);
+  const all = [...first.items];
+  const pages = Math.min(first.total_pages, MAX_PAGES);
+
+  if (pages > 1) {
+    const rest = await Promise.all(
+      Array.from({ length: pages - 1 }, (_, i) => fetcher(i + 2, PAGE_SIZE))
+    );
+    for (const r of rest) all.push(...r.items);
+  }
+
+  return all;
+}
+
+// ============================================================================
+// API Auth / Availability (unchanged)
+// ============================================================================
+
+let apiAvailable: boolean | null = null;
+let lastApiCheck = 0;
+const API_CHECK_INTERVAL = 60000;
+let adminTokenExpiry = 0;
+
 async function isApiAvailable(): Promise<boolean> {
   const now = Date.now();
-
   if (apiAvailable !== null && now - lastApiCheck < API_CHECK_INTERVAL) {
     return apiAvailable;
   }
-
   try {
     apiAvailable = await numuApi.healthCheck();
     lastApiCheck = now;
-
-    if (apiAvailable) {
-      console.log("[NUMU Data Layer] API is available");
-    } else {
-      console.warn("[NUMU Data Layer] API is not available");
-    }
-
+    if (apiAvailable) console.log("[NUMU Data Layer] API is available");
+    else console.warn("[NUMU Data Layer] API is not available");
     return apiAvailable;
   } catch {
     apiAvailable = false;
@@ -45,19 +83,12 @@ async function isApiAvailable(): Promise<boolean> {
   }
 }
 
-/**
- * Ensure we have a valid admin token
- */
 async function ensureAuthenticated(): Promise<boolean> {
   const now = Date.now();
-
-  if (adminTokenExpiry > now) {
-    return true;
-  }
+  if (adminTokenExpiry > now) return true;
 
   const email = process.env.NUMU_ADMIN_EMAIL;
   const password = process.env.NUMU_ADMIN_PASSWORD;
-
   if (!email || !password) {
     console.warn("[NUMU Data Layer] Admin credentials not configured");
     return false;
@@ -74,18 +105,9 @@ async function ensureAuthenticated(): Promise<boolean> {
   }
 }
 
-/**
- * Ensure API is available and authenticated. Throws if not.
- */
 async function requireApi(): Promise<void> {
-  const available = await isApiAvailable();
-  if (!available) {
-    throw new Error("NUMU API is not available");
-  }
-  const authed = await ensureAuthenticated();
-  if (!authed) {
-    throw new Error("NUMU API authentication failed");
-  }
+  if (!(await isApiAvailable())) throw new Error("NUMU API is not available");
+  if (!(await ensureAuthenticated())) throw new Error("NUMU API authentication failed");
 }
 
 // ============================================================================
@@ -111,12 +133,10 @@ export interface Merchant {
   updatedAt: Date;
 }
 
-export async function getMerchants(params: {
-  limit?: number;
-  offset?: number;
-  status?: string;
-  search?: string;
-}): Promise<{ merchants: Merchant[]; total: number }> {
+export async function getMerchants(
+  params: { limit?: number; offset?: number; status?: string; search?: string },
+  scope: ScopeFilter,
+): Promise<{ merchants: Merchant[]; total: number }> {
   await requireApi();
 
   const page = Math.floor((params.offset || 0) / (params.limit || 20)) + 1;
@@ -127,7 +147,7 @@ export async function getMerchants(params: {
     search: params.search,
   });
 
-  const merchants: Merchant[] = result.items.map((store, index) => ({
+  let items = result.items.map((store, index) => ({
     id: (page - 1) * (params.limit || 20) + index + 1,
     merchantId: store.id,
     name: store.name,
@@ -146,29 +166,41 @@ export async function getMerchants(params: {
     updatedAt: new Date(store.created_at),
   }));
 
-  return { merchants, total: result.total };
+  if (scope !== "all") {
+    items = items.filter((m) => isAllowed(m.merchantId, scope));
+  }
+
+  return { merchants: items, total: scope === "all" ? result.total : items.length };
 }
 
 export async function getMerchantById(
-  merchantId: string
+  merchantId: string,
+  scope: ScopeFilter,
 ): Promise<Merchant | null> {
+  if (!isAllowed(merchantId, scope)) {
+    throw new TRPCError({ code: "FORBIDDEN", message: "Access denied to this merchant" });
+  }
   await requireApi();
-  // Use list with a single result filtered by... we don't have a getById for admin stores
-  // Just return null for now — the page doesn't use this
   return null;
 }
 
 export async function updateMerchantStatus(
   merchantId: string,
   status: string,
-  reason?: string
+  scope: ScopeFilter,
+  reason?: string,
 ): Promise<boolean> {
+  if (!isAllowed(merchantId, scope)) {
+    throw new TRPCError({ code: "FORBIDDEN", message: "Access denied to this merchant" });
+  }
   await requireApi();
   await numuApi.updateStoreStatus(merchantId, status, reason);
   return true;
 }
 
-export async function getMerchantStats(): Promise<{
+export async function getMerchantStats(
+  scope: ScopeFilter,
+): Promise<{
   total: number;
   active: number;
   pending_approval: number;
@@ -176,7 +208,22 @@ export async function getMerchantStats(): Promise<{
   inactive: number;
 }> {
   await requireApi();
-  return numuApi.getStoreStats();
+
+  if (scope === "all") {
+    return numuApi.getStoreStats();
+  }
+
+  // Scoped admin: fetch all stores and compute stats from their visible subset
+  const allStores = await fetchAllPages((page, limit) => numuApi.listStoresAdmin({ page, limit }));
+  const visible = allStores.filter((s) => isAllowed(s.id, scope));
+
+  const stats = { total: 0, active: 0, pending_approval: 0, suspended: 0, inactive: 0 };
+  for (const s of visible) {
+    stats.total++;
+    const st = s.status as keyof typeof stats;
+    if (st in stats) stats[st]++;
+  }
+  return stats;
 }
 
 // ============================================================================
@@ -241,47 +288,70 @@ function mapNuMUOrder(order: NuMUOrder, index: number): Order {
   };
 }
 
-export async function getOrders(params: {
-  limit?: number;
-  offset?: number;
-  status?: string;
-  merchantId?: string;
-  search?: string;
-  startDate?: Date;
-  endDate?: Date;
-}): Promise<{ orders: Order[]; total: number }> {
+export async function getOrders(
+  params: {
+    limit?: number;
+    offset?: number;
+    status?: string;
+    merchantId?: string;
+    search?: string;
+    startDate?: Date;
+    endDate?: Date;
+  },
+  scope: ScopeFilter,
+): Promise<{ orders: Order[]; total: number }> {
   await requireApi();
 
   const page = Math.floor((params.offset || 0) / (params.limit || 20)) + 1;
+  const storeId = singleStoreId(scope);
+
   const result = await numuApi.listOrders({
     page,
     limit: params.limit,
     status: params.status,
     search: params.search,
+    store_id: storeId,
   });
 
-  return {
-    orders: result.items.map(mapNuMUOrder),
-    total: result.total,
-  };
+  let mapped = result.items.map(mapNuMUOrder);
+
+  // Multi-store scoped admin: filter in-memory
+  if (scope !== "all" && !storeId) {
+    mapped = mapped.filter((o) => isAllowed(o.merchantId, scope));
+  }
+
+  return { orders: mapped, total: scope === "all" || storeId ? result.total : mapped.length };
 }
 
-export async function getOrderById(orderId: string): Promise<Order | null> {
+export async function getOrderById(
+  orderId: string,
+  scope: ScopeFilter,
+): Promise<Order | null> {
   await requireApi();
   const order = await numuApi.getOrder(orderId);
-  return mapNuMUOrder(order, 0);
+  const mapped = mapNuMUOrder(order, 0);
+
+  if (!isAllowed(mapped.merchantId, scope)) {
+    throw new TRPCError({ code: "FORBIDDEN", message: "Access denied to this order" });
+  }
+
+  return mapped;
 }
 
 export async function updateOrderStatus(
   orderId: string,
-  status: string
+  status: string,
+  scope: ScopeFilter,
 ): Promise<boolean> {
-  await requireApi();
+  // Verify ownership before mutating
+  await getOrderById(orderId, scope);
   await numuApi.updateOrderStatus(orderId, status);
   return true;
 }
 
-export async function getOrderStats(): Promise<{
+export async function getOrderStats(
+  scope: ScopeFilter,
+): Promise<{
   total: number;
   pending: number;
   processing: number;
@@ -291,21 +361,32 @@ export async function getOrderStats(): Promise<{
 }> {
   await requireApi();
 
-  const statuses = [
-    "pending",
-    "processing",
-    "shipped",
-    "delivered",
-    "cancelled",
-  ] as const;
+  const storeId = singleStoreId(scope);
+  const statuses = ["pending", "processing", "shipped", "delivered", "cancelled"] as const;
   const counts: Record<string, number> = {};
 
-  const allResult = await numuApi.listOrders({ page: 1, limit: 1 });
-  const total = allResult.total;
+  const [allResult, ...statusResults] = await Promise.all([
+    numuApi.listOrders({ page: 1, limit: 1, store_id: storeId }),
+    ...statuses.map((s) => numuApi.listOrders({ status: s, page: 1, limit: 1, store_id: storeId })),
+  ]);
+  let total = allResult.total;
 
-  for (const s of statuses) {
-    const result = await numuApi.listOrders({ status: s, page: 1, limit: 1 });
-    counts[s] = result.total;
+  statuses.forEach((s, i) => {
+    counts[s] = statusResults[i].total;
+  });
+
+  // Multi-store scoped admin: fetch all orders and count from the filtered set
+  if (scope !== "all" && !storeId) {
+    const allOrders = await fetchAllPages((page, limit) => numuApi.listOrders({ page, limit }));
+    const filtered = allOrders
+      .map(mapNuMUOrder)
+      .filter((o) => isAllowed(o.merchantId, scope));
+
+    total = filtered.length;
+    for (const s of statuses) counts[s] = 0;
+    for (const o of filtered) {
+      if (o.status in counts) counts[o.status]++;
+    }
   }
 
   return {
@@ -356,34 +437,52 @@ function mapNuMUCustomer(customer: NuMUCustomer, index: number): Customer {
   };
 }
 
-export async function getCustomers(params: {
-  limit?: number;
-  offset?: number;
-  merchantId?: string;
-  search?: string;
-}): Promise<{ customers: Customer[]; total: number }> {
+export async function getCustomers(
+  params: { limit?: number; offset?: number; merchantId?: string; search?: string },
+  scope: ScopeFilter,
+): Promise<{ customers: Customer[]; total: number }> {
   await requireApi();
 
   const page = Math.floor((params.offset || 0) / (params.limit || 20)) + 1;
+  const storeId = singleStoreId(scope);
+
   const result = await numuApi.listCustomers({
     page,
     limit: params.limit,
     search: params.search,
+    store_id: storeId,
   });
 
+  let mapped = result.items.map(mapNuMUCustomer);
+
+  if (scope !== "all" && !storeId) {
+    mapped = mapped.filter((c) => isAllowed(c.merchantId, scope));
+  }
+
   return {
-    customers: result.items.map(mapNuMUCustomer),
-    total: result.total,
+    customers: mapped,
+    total: scope === "all" || storeId ? result.total : mapped.length,
   };
 }
 
-export async function getCustomerStats(): Promise<{
-  total: number;
-  active: number;
-}> {
+export async function getCustomerStats(
+  scope: ScopeFilter,
+): Promise<{ total: number; active: number }> {
   await requireApi();
-  const result = await numuApi.listCustomers({ page: 1, limit: 1 });
-  return { total: result.total, active: result.total };
+
+  const storeId = singleStoreId(scope);
+
+  if (scope === "all" || storeId) {
+    const result = await numuApi.listCustomers({ page: 1, limit: 1, store_id: storeId });
+    return { total: result.total, active: result.total };
+  }
+
+  // Multi-store scoped admin: paginate all customers and filter
+  const allCustomers = await fetchAllPages((page, limit) => numuApi.listCustomers({ page, limit }));
+  const filtered = allCustomers
+    .map(mapNuMUCustomer)
+    .filter((c) => isAllowed(c.merchantId, scope));
+  return { total: filtered.length, active: filtered.length };
 }
 
 // ============================================================================
@@ -436,26 +535,32 @@ function mapNuMUProduct(product: NuMUProduct, index: number): Product {
   };
 }
 
-export async function getProducts(params: {
-  limit?: number;
-  offset?: number;
-  merchantId?: string;
-  status?: string;
-  search?: string;
-}): Promise<{ products: Product[]; total: number }> {
+export async function getProducts(
+  params: { limit?: number; offset?: number; merchantId?: string; status?: string; search?: string },
+  scope: ScopeFilter,
+): Promise<{ products: Product[]; total: number }> {
   await requireApi();
 
   const page = Math.floor((params.offset || 0) / (params.limit || 20)) + 1;
+  const storeId = singleStoreId(scope);
+
   const result = await numuApi.listProducts({
     page,
     limit: params.limit,
     status: params.status,
     search: params.search,
+    store_id: storeId,
   });
 
+  let mapped = result.items.map(mapNuMUProduct);
+
+  if (scope !== "all" && !storeId) {
+    mapped = mapped.filter((p) => isAllowed(p.merchantId, scope));
+  }
+
   return {
-    products: result.items.map(mapNuMUProduct),
-    total: result.total,
+    products: mapped,
+    total: scope === "all" || storeId ? result.total : mapped.length,
   };
 }
 
@@ -463,7 +568,9 @@ export async function getProducts(params: {
 // Dashboard Stats
 // ============================================================================
 
-export async function getDashboardStats(): Promise<{
+export async function getDashboardStats(
+  scope: ScopeFilter,
+): Promise<{
   totalRevenue: number;
   activeMerchants: number;
   totalOrders: number;
@@ -474,7 +581,34 @@ export async function getDashboardStats(): Promise<{
   customersChange: number;
 }> {
   await requireApi();
-  return numuApi.getDashboardStats();
+
+  if (scope === "all") {
+    return numuApi.getDashboardStats();
+  }
+
+  // Scoped admin: fetch all data and aggregate from the filtered subset
+  const [allStores, allOrders, allCustomers] = await Promise.all([
+    fetchAllPages((page, limit) => numuApi.listStoresAdmin({ page, limit })),
+    fetchAllPages((page, limit) => numuApi.listOrders({ page, limit })),
+    fetchAllPages((page, limit) => numuApi.listCustomers({ page, limit })),
+  ]);
+
+  const visibleStores = allStores.filter((s) => isAllowed(s.id, scope));
+  const visibleOrders = allOrders.map(mapNuMUOrder).filter((o) => isAllowed(o.merchantId, scope));
+  const visibleCustomers = allCustomers.map(mapNuMUCustomer).filter((c) => isAllowed(c.merchantId, scope));
+
+  const totalRevenue = visibleOrders.reduce((sum, o) => sum + o.total, 0);
+
+  return {
+    totalRevenue,
+    activeMerchants: visibleStores.filter((s) => s.status === "active").length,
+    totalOrders: visibleOrders.length,
+    totalCustomers: visibleCustomers.length,
+    revenueChange: 0,
+    merchantsChange: 0,
+    ordersChange: 0,
+    customersChange: 0,
+  };
 }
 
 // ============================================================================
@@ -482,35 +616,44 @@ export async function getDashboardStats(): Promise<{
 // ============================================================================
 
 export async function getRevenueByMonth(
-  _months: number = 12
+  _months: number = 12,
+  _scope: ScopeFilter = "all",
 ): Promise<{ month: string; revenue: number }[]> {
   // Not available from the API yet
   return [];
 }
 
 export async function getTopMerchants(
-  _limit: number = 5
+  _limit: number = 5,
+  _scope: ScopeFilter = "all",
 ): Promise<{ name: string; revenue: number }[]> {
   // Not available from the API yet
   return [];
 }
 
-export async function getRecentOrders(limit: number = 10): Promise<Order[]> {
+export async function getRecentOrders(
+  limit: number = 10,
+  scope: ScopeFilter = "all",
+): Promise<Order[]> {
   await requireApi();
-  const result = await numuApi.listOrders({ page: 1, limit });
-  return result.items.map(mapNuMUOrder);
+
+  const storeId = singleStoreId(scope);
+  const result = await numuApi.listOrders({ page: 1, limit, store_id: storeId });
+  let mapped = result.items.map(mapNuMUOrder);
+
+  if (scope !== "all" && !storeId) {
+    mapped = mapped.filter((o) => isAllowed(o.merchantId, scope));
+  }
+
+  return mapped;
 }
 
 // ============================================================================
-// Landing Page Config
+// Landing Page Config (platform-wide, no tenant scoping)
 // ============================================================================
 
-/**
- * Get landing page configuration
- */
 export async function getLandingConfig() {
   if (!(await isApiAvailable()) || !(await ensureAuthenticated())) {
-    // Return default config when API unavailable
     return {
       sections: {
         hero: { visible: true, order: 0 },
@@ -531,11 +674,9 @@ export async function getLandingConfig() {
     const data = await numuApi.getLandingConfig();
     return data;
   } catch (err: any) {
-    // Log detailed error for debugging
     const status = err?.response?.status;
     const detail = err?.response?.data?.detail || err?.message;
     console.error(`[Data Layer] Failed to get landing config (status=${status}):`, detail);
-    // Fall back to defaults — never block admin UI for a read-only config fetch
     return {
       sections: {
         hero: { visible: true, order: 0 },
@@ -553,9 +694,6 @@ export async function getLandingConfig() {
   }
 }
 
-/**
- * Update landing page configuration
- */
 export async function updateLandingConfig(input: { sections: Record<string, { visible: boolean; order: number }> }) {
   if (!(await isApiAvailable()) || !(await ensureAuthenticated())) {
     throw new TRPCError({ code: "SERVICE_UNAVAILABLE", message: "NUMU API is not available" });

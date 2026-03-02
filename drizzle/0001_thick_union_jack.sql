@@ -1,0 +1,9 @@
+ALTER TABLE "admin_merchant_assignments" ADD CONSTRAINT "admin_merchant_assignments_admin_id_admin_users_id_fk" FOREIGN KEY ("admin_id") REFERENCES "public"."admin_users"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "admin_merchant_assignments" ADD CONSTRAINT "admin_merchant_assignments_merchant_id_admin_merchants_merchant_id_fk" FOREIGN KEY ("merchant_id") REFERENCES "public"."admin_merchants"("merchant_id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "admin_customers" ADD CONSTRAINT "admin_customers_merchant_id_admin_merchants_merchant_id_fk" FOREIGN KEY ("merchant_id") REFERENCES "public"."admin_merchants"("merchant_id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "admin_orders" ADD CONSTRAINT "admin_orders_merchant_id_admin_merchants_merchant_id_fk" FOREIGN KEY ("merchant_id") REFERENCES "public"."admin_merchants"("merchant_id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "admin_products" ADD CONSTRAINT "admin_products_merchant_id_admin_merchants_merchant_id_fk" FOREIGN KEY ("merchant_id") REFERENCES "public"."admin_merchants"("merchant_id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
+CREATE INDEX "assignments_merchant_id_idx" ON "admin_merchant_assignments" USING btree ("merchant_id");--> statement-breakpoint
+CREATE INDEX "customers_merchant_id_idx" ON "admin_customers" USING btree ("merchant_id");--> statement-breakpoint
+CREATE INDEX "orders_merchant_id_idx" ON "admin_orders" USING btree ("merchant_id");--> statement-breakpoint
+CREATE INDEX "products_merchant_id_idx" ON "admin_products" USING btree ("merchant_id");

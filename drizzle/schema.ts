@@ -1,8 +1,8 @@
-import { bigint, decimal, int, json, mysqlEnum, mysqlTable, text, timestamp, varchar } from "drizzle-orm/mysql-core";
+import { bigint, index, integer, jsonb, pgEnum, pgTable, serial, text, timestamp, uniqueIndex, varchar } from "drizzle-orm/pg-core";
 
 /**
- * NUMU Admin Backoffice Database Schema
- * 
+ * NUMU Admin Backoffice Database Schema (PostgreSQL)
+ *
  * This schema supports the admin dashboard for managing:
  * - Platform users (admins)
  * - Merchants (store owners)
@@ -12,18 +12,29 @@ import { bigint, decimal, int, json, mysqlEnum, mysqlTable, text, timestamp, var
  */
 
 // ============================================
+// ENUMS
+// ============================================
+export const userRoleEnum = pgEnum("admin_user_role", ["user", "admin", "super_admin"]);
+export const merchantStatusEnum = pgEnum("admin_merchant_status", ["active", "pending", "suspended", "inactive"]);
+export const merchantPlanEnum = pgEnum("admin_merchant_plan", ["free", "basic", "pro", "enterprise"]);
+export const orderStatusEnum = pgEnum("admin_order_status", ["pending", "processing", "shipped", "delivered", "cancelled", "refunded"]);
+export const paymentStatusEnum = pgEnum("admin_payment_status", ["pending", "paid", "failed", "refunded"]);
+export const customerStatusEnum = pgEnum("admin_customer_status", ["active", "inactive"]);
+export const productStatusEnum = pgEnum("admin_product_status", ["active", "draft", "archived"]);
+
+// ============================================
 // USERS TABLE (Admin Authentication)
 // ============================================
-export const users = mysqlTable("users", {
-  id: int("id").autoincrement().primaryKey(),
-  openId: varchar("openId", { length: 64 }).notNull().unique(),
+export const users = pgTable("admin_users", {
+  id: serial("id").primaryKey(),
+  openId: varchar("open_id", { length: 64 }).notNull().unique(),
   name: text("name"),
   email: varchar("email", { length: 320 }),
-  loginMethod: varchar("loginMethod", { length: 64 }),
-  role: mysqlEnum("role", ["user", "admin"]).default("user").notNull(),
-  createdAt: timestamp("createdAt").defaultNow().notNull(),
-  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
-  lastSignedIn: timestamp("lastSignedIn").defaultNow().notNull(),
+  loginMethod: varchar("login_method", { length: 64 }),
+  role: userRoleEnum("role").default("user").notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  lastSignedIn: timestamp("last_signed_in").defaultNow().notNull(),
 });
 
 export type User = typeof users.$inferSelect;
@@ -32,10 +43,10 @@ export type InsertUser = typeof users.$inferInsert;
 // ============================================
 // MERCHANTS TABLE
 // ============================================
-export const merchants = mysqlTable("merchants", {
-  id: int("id").autoincrement().primaryKey(),
+export const merchants = pgTable("admin_merchants", {
+  id: serial("id").primaryKey(),
   /** Unique merchant identifier */
-  merchantId: varchar("merchantId", { length: 64 }).notNull().unique(),
+  merchantId: varchar("merchant_id", { length: 64 }).notNull().unique(),
   /** Store name */
   name: varchar("name", { length: 255 }).notNull(),
   /** Business email */
@@ -43,25 +54,25 @@ export const merchants = mysqlTable("merchants", {
   /** Store domain/subdomain */
   domain: varchar("domain", { length: 255 }),
   /** Store logo URL */
-  logoUrl: text("logoUrl"),
+  logoUrl: text("logo_url"),
   /** Merchant status */
-  status: mysqlEnum("status", ["active", "pending", "suspended", "inactive"]).default("pending").notNull(),
+  status: merchantStatusEnum("status").default("pending").notNull(),
   /** Subscription plan */
-  plan: mysqlEnum("plan", ["free", "basic", "pro", "enterprise"]).default("free").notNull(),
+  plan: merchantPlanEnum("plan").default("free").notNull(),
   /** Country code */
   country: varchar("country", { length: 2 }),
   /** Business category */
   category: varchar("category", { length: 100 }),
   /** Total revenue generated (in cents) */
-  totalRevenue: bigint("totalRevenue", { mode: "number" }).default(0),
+  totalRevenue: bigint("total_revenue", { mode: "number" }).default(0),
   /** Total orders count */
-  totalOrders: int("totalOrders").default(0),
+  totalOrders: integer("total_orders").default(0),
   /** Total products count */
-  totalProducts: int("totalProducts").default(0),
+  totalProducts: integer("total_products").default(0),
   /** Store settings JSON */
-  settings: json("settings"),
-  createdAt: timestamp("createdAt").defaultNow().notNull(),
-  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+  settings: jsonb("settings"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
 
 export type Merchant = typeof merchants.$inferSelect;
@@ -70,22 +81,24 @@ export type InsertMerchant = typeof merchants.$inferInsert;
 // ============================================
 // ORDERS TABLE
 // ============================================
-export const orders = mysqlTable("orders", {
-  id: int("id").autoincrement().primaryKey(),
+export const orders = pgTable("admin_orders", {
+  id: serial("id").primaryKey(),
   /** Unique order identifier */
-  orderId: varchar("orderId", { length: 64 }).notNull().unique(),
+  orderId: varchar("order_id", { length: 64 }).notNull().unique(),
   /** Reference to merchant */
-  merchantId: varchar("merchantId", { length: 64 }).notNull(),
+  merchantId: varchar("merchant_id", { length: 64 })
+    .notNull()
+    .references(() => merchants.merchantId, { onDelete: "restrict" }),
   /** Reference to customer */
-  customerId: varchar("customerId", { length: 64 }),
+  customerId: varchar("customer_id", { length: 64 }),
   /** Customer email */
-  customerEmail: varchar("customerEmail", { length: 320 }),
+  customerEmail: varchar("customer_email", { length: 320 }),
   /** Customer name */
-  customerName: varchar("customerName", { length: 255 }),
+  customerName: varchar("customer_name", { length: 255 }),
   /** Order status */
-  status: mysqlEnum("status", ["pending", "processing", "shipped", "delivered", "cancelled", "refunded"]).default("pending").notNull(),
+  status: orderStatusEnum("status").default("pending").notNull(),
   /** Payment status */
-  paymentStatus: mysqlEnum("paymentStatus", ["pending", "paid", "failed", "refunded"]).default("pending").notNull(),
+  paymentStatus: paymentStatusEnum("payment_status").default("pending").notNull(),
   /** Order subtotal (in cents) */
   subtotal: bigint("subtotal", { mode: "number" }).notNull(),
   /** Tax amount (in cents) */
@@ -99,16 +112,19 @@ export const orders = mysqlTable("orders", {
   /** Currency code */
   currency: varchar("currency", { length: 3 }).default("USD"),
   /** Shipping address JSON */
-  shippingAddress: json("shippingAddress"),
+  shippingAddress: jsonb("shipping_address"),
   /** Billing address JSON */
-  billingAddress: json("billingAddress"),
+  billingAddress: jsonb("billing_address"),
   /** Order items JSON */
-  items: json("items"),
+  items: jsonb("items"),
   /** Order notes */
   notes: text("notes"),
-  createdAt: timestamp("createdAt").defaultNow().notNull(),
-  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
-});
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+}, (table) => [
+  index("orders_merchant_id_idx").on(table.merchantId),
+  index("orders_customer_id_idx").on(table.customerId),
+]);
 
 export type Order = typeof orders.$inferSelect;
 export type InsertOrder = typeof orders.$inferInsert;
@@ -116,12 +132,14 @@ export type InsertOrder = typeof orders.$inferInsert;
 // ============================================
 // CUSTOMERS TABLE
 // ============================================
-export const customers = mysqlTable("customers", {
-  id: int("id").autoincrement().primaryKey(),
+export const customers = pgTable("admin_customers", {
+  id: serial("id").primaryKey(),
   /** Unique customer identifier */
-  customerId: varchar("customerId", { length: 64 }).notNull().unique(),
+  customerId: varchar("customer_id", { length: 64 }).notNull().unique(),
   /** Reference to merchant */
-  merchantId: varchar("merchantId", { length: 64 }).notNull(),
+  merchantId: varchar("merchant_id", { length: 64 })
+    .notNull()
+    .references(() => merchants.merchantId, { onDelete: "restrict" }),
   /** Customer email */
   email: varchar("email", { length: 320 }).notNull(),
   /** Customer name */
@@ -129,18 +147,20 @@ export const customers = mysqlTable("customers", {
   /** Phone number */
   phone: varchar("phone", { length: 32 }),
   /** Customer status */
-  status: mysqlEnum("status", ["active", "inactive"]).default("active").notNull(),
+  status: customerStatusEnum("status").default("active").notNull(),
   /** Total orders count */
-  totalOrders: int("totalOrders").default(0),
+  totalOrders: integer("total_orders").default(0),
   /** Total spent (in cents) */
-  totalSpent: bigint("totalSpent", { mode: "number" }).default(0),
+  totalSpent: bigint("total_spent", { mode: "number" }).default(0),
   /** Default shipping address JSON */
-  defaultAddress: json("defaultAddress"),
+  defaultAddress: jsonb("default_address"),
   /** Customer tags */
-  tags: json("tags"),
-  createdAt: timestamp("createdAt").defaultNow().notNull(),
-  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
-});
+  tags: jsonb("tags"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+}, (table) => [
+  index("customers_merchant_id_idx").on(table.merchantId),
+]);
 
 export type Customer = typeof customers.$inferSelect;
 export type InsertCustomer = typeof customers.$inferInsert;
@@ -148,12 +168,14 @@ export type InsertCustomer = typeof customers.$inferInsert;
 // ============================================
 // PRODUCTS TABLE
 // ============================================
-export const products = mysqlTable("products", {
-  id: int("id").autoincrement().primaryKey(),
+export const products = pgTable("admin_products", {
+  id: serial("id").primaryKey(),
   /** Unique product identifier */
-  productId: varchar("productId", { length: 64 }).notNull().unique(),
+  productId: varchar("product_id", { length: 64 }).notNull().unique(),
   /** Reference to merchant */
-  merchantId: varchar("merchantId", { length: 64 }).notNull(),
+  merchantId: varchar("merchant_id", { length: 64 })
+    .notNull()
+    .references(() => merchants.merchantId, { onDelete: "restrict" }),
   /** Product name */
   name: varchar("name", { length: 255 }).notNull(),
   /** Product description */
@@ -163,28 +185,30 @@ export const products = mysqlTable("products", {
   /** Product price (in cents) */
   price: bigint("price", { mode: "number" }).notNull(),
   /** Compare at price (in cents) */
-  compareAtPrice: bigint("compareAtPrice", { mode: "number" }),
+  compareAtPrice: bigint("compare_at_price", { mode: "number" }),
   /** Cost per item (in cents) */
-  costPerItem: bigint("costPerItem", { mode: "number" }),
+  costPerItem: bigint("cost_per_item", { mode: "number" }),
   /** Currency code */
   currency: varchar("currency", { length: 3 }).default("USD"),
   /** Product status */
-  status: mysqlEnum("status", ["active", "draft", "archived"]).default("draft").notNull(),
+  status: productStatusEnum("status").default("draft").notNull(),
   /** Inventory quantity */
-  inventory: int("inventory").default(0),
+  inventory: integer("inventory").default(0),
   /** Product category */
   category: varchar("category", { length: 100 }),
   /** Product images JSON */
-  images: json("images"),
+  images: jsonb("images"),
   /** Product variants JSON */
-  variants: json("variants"),
+  variants: jsonb("variants"),
   /** Product tags */
-  tags: json("tags"),
+  tags: jsonb("tags"),
   /** Total sales count */
-  totalSales: int("totalSales").default(0),
-  createdAt: timestamp("createdAt").defaultNow().notNull(),
-  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
-});
+  totalSales: integer("total_sales").default(0),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+}, (table) => [
+  index("products_merchant_id_idx").on(table.merchantId),
+]);
 
 export type Product = typeof products.$inferSelect;
 export type InsertProduct = typeof products.$inferInsert;
@@ -192,24 +216,50 @@ export type InsertProduct = typeof products.$inferInsert;
 // ============================================
 // PLATFORM STATS TABLE (Aggregated metrics)
 // ============================================
-export const platformStats = mysqlTable("platform_stats", {
-  id: int("id").autoincrement().primaryKey(),
+export const platformStats = pgTable("admin_platform_stats", {
+  id: serial("id").primaryKey(),
   /** Date for the stats */
   date: timestamp("date").notNull(),
   /** Total revenue (in cents) */
-  totalRevenue: bigint("totalRevenue", { mode: "number" }).default(0),
+  totalRevenue: bigint("total_revenue", { mode: "number" }).default(0),
   /** Total orders */
-  totalOrders: int("totalOrders").default(0),
+  totalOrders: integer("total_orders").default(0),
   /** New merchants */
-  newMerchants: int("newMerchants").default(0),
+  newMerchants: integer("new_merchants").default(0),
   /** New customers */
-  newCustomers: int("newCustomers").default(0),
+  newCustomers: integer("new_customers").default(0),
   /** Active merchants */
-  activeMerchants: int("activeMerchants").default(0),
+  activeMerchants: integer("active_merchants").default(0),
   /** Conversion rate (percentage * 100) */
-  conversionRate: int("conversionRate").default(0),
-  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  conversionRate: integer("conversion_rate").default(0),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
 export type PlatformStats = typeof platformStats.$inferSelect;
 export type InsertPlatformStats = typeof platformStats.$inferInsert;
+
+// ============================================
+// ADMIN MERCHANT ASSIGNMENTS (Tenant Scoping)
+// ============================================
+export const adminMerchantAssignments = pgTable(
+  "admin_merchant_assignments",
+  {
+    id: serial("id").primaryKey(),
+    /** Reference to admin user */
+    adminId: integer("admin_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    /** NUMU store/merchant ID the admin is assigned to */
+    merchantId: varchar("merchant_id", { length: 64 })
+      .notNull()
+      .references(() => merchants.merchantId, { onDelete: "restrict" }),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex("admin_merchant_unique").on(table.adminId, table.merchantId),
+    index("assignments_merchant_id_idx").on(table.merchantId),
+  ]
+);
+
+export type AdminMerchantAssignment = typeof adminMerchantAssignments.$inferSelect;
+export type InsertAdminMerchantAssignment = typeof adminMerchantAssignments.$inferInsert;
