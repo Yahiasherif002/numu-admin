@@ -20,7 +20,11 @@ import {
 } from "@/components/ui/table";
 import { getLoginUrl } from "@/const";
 import { cn } from "@/lib/utils";
-import { trpc } from "@/lib/trpc";
+import { useQuery } from "@tanstack/react-query";
+import { getDashboardStats } from "@/services/dashboardService";
+import { getOrders, getOrderStats } from "@/services/orderService";
+import { getMerchants, getMerchantStats } from "@/services/merchantService";
+import { getCustomerStats } from "@/services/customerService";
 import {
   CheckCircle,
   Clock,
@@ -38,33 +42,44 @@ export default function Home() {
   const { user, loading, isAuthenticated } = useAuth();
 
   // Fetch dashboard stats
-  const { data: dashboardStats, isLoading: statsLoading } =
-    trpc.dashboard.stats.useQuery(undefined, { enabled: isAuthenticated });
+  const { data: dashboardStats, isLoading: statsLoading } = useQuery({
+    queryKey: ["dashboard", "stats"],
+    queryFn: getDashboardStats,
+    enabled: isAuthenticated,
+  });
 
   // Fetch order stats
-  const { data: orderStats } = trpc.orders.stats.useQuery(undefined, {
+  const { data: orderStats } = useQuery({
+    queryKey: ["orders", "stats"],
+    queryFn: getOrderStats,
     enabled: isAuthenticated,
   });
 
   // Fetch merchant stats
-  const { data: merchantStats } = trpc.merchants.stats.useQuery(undefined, {
+  const { data: merchantStats } = useQuery({
+    queryKey: ["merchants", "stats"],
+    queryFn: getMerchantStats,
     enabled: isAuthenticated,
   });
 
   // Fetch recent orders
-  const { data: recentOrdersData } = trpc.orders.list.useQuery(
-    { limit: 8, offset: 0 },
-    { enabled: isAuthenticated }
-  );
+  const { data: recentOrdersData } = useQuery({
+    queryKey: ["orders", "list", { limit: 8, offset: 0 }],
+    queryFn: () => getOrders({ limit: 8, offset: 0 }),
+    enabled: isAuthenticated,
+  });
 
   // Fetch top merchants
-  const { data: topMerchantsData } = trpc.merchants.list.useQuery(
-    { limit: 6, offset: 0, status: "active" },
-    { enabled: isAuthenticated }
-  );
+  const { data: topMerchantsData } = useQuery({
+    queryKey: ["merchants", "list", { limit: 6, offset: 0, status: "active" }],
+    queryFn: () => getMerchants({ limit: 6, offset: 0, status: "active" }),
+    enabled: isAuthenticated,
+  });
 
   // Fetch customer stats
-  const { data: customerStats } = trpc.customers.stats.useQuery(undefined, {
+  const { data: customerStats } = useQuery({
+    queryKey: ["customers", "stats"],
+    queryFn: getCustomerStats,
     enabled: isAuthenticated,
   });
 
@@ -188,7 +203,7 @@ export default function Home() {
               {[
                 { label: "Total Merchants", value: merchantStats?.total ?? 0, color: "bg-blue-500" },
                 { label: "Active", value: merchantStats?.active ?? 0, color: "bg-emerald-500" },
-                { label: "Pending", value: merchantStats?.pending ?? 0, color: "bg-yellow-500" },
+                { label: "Pending", value: merchantStats?.pending_approval ?? 0, color: "bg-yellow-500" },
                 { label: "Suspended", value: merchantStats?.suspended ?? 0, color: "bg-rose-500" },
               ].map((s) => (
                 <div key={s.label} className="flex items-center justify-between">

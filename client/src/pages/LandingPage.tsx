@@ -21,7 +21,8 @@ import {
 import { Separator } from "@/components/ui/separator";
 import { Switch } from "@/components/ui/switch";
 import { getLoginUrl } from "@/const";
-import { trpc } from "@/lib/trpc";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { getLandingConfig, updateLandingConfig } from "@/services/landingPageService";
 import {
   Eye,
   EyeOff,
@@ -51,9 +52,16 @@ type SectionsConfig = Record<string, { visible: boolean; order: number }>;
 export default function LandingPage() {
   const { loading, isAuthenticated } = useAuth();
 
-  const configQuery = trpc.landingPage.getConfig.useQuery();
-  const updateMutation = trpc.landingPage.updateConfig.useMutation();
-  const utils = trpc.useUtils();
+  const queryClient = useQueryClient();
+
+  const configQuery = useQuery({
+    queryKey: ["landingPage", "config"],
+    queryFn: getLandingConfig,
+  });
+
+  const updateMutation = useMutation({
+    mutationFn: updateLandingConfig,
+  });
 
   const [localSections, setLocalSections] = useState<SectionsConfig | null>(null);
 
@@ -99,7 +107,7 @@ export default function LandingPage() {
     if (!localSections) return;
     try {
       await updateMutation.mutateAsync({ sections: localSections });
-      await utils.landingPage.getConfig.invalidate();
+      await queryClient.invalidateQueries({ queryKey: ["landingPage", "config"] });
       toast.success("Landing page configuration saved successfully");
     } catch {
       toast.error("Failed to save landing page configuration");

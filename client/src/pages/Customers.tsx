@@ -22,7 +22,8 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { getLoginUrl } from "@/const";
-import { trpc } from "@/lib/trpc";
+import { useQuery } from "@tanstack/react-query";
+import { getCustomers, getCustomerStats } from "@/services/customerService";
 import {
   ChevronLeft,
   ChevronRight,
@@ -42,18 +43,23 @@ export default function Customers() {
 
   const limit = 10;
 
+  const queryParams = {
+    limit,
+    offset: page * limit,
+    search: search || undefined,
+  };
+
   // Fetch customers
-  const { data, isLoading } = trpc.customers.list.useQuery(
-    {
-      limit,
-      offset: page * limit,
-      search: search || undefined,
-    },
-    { enabled: isAuthenticated }
-  );
+  const { data, isLoading } = useQuery({
+    queryKey: ["customers", "list", queryParams],
+    queryFn: () => getCustomers(queryParams),
+    enabled: isAuthenticated,
+  });
 
   // Fetch customer stats
-  const { data: stats } = trpc.customers.stats.useQuery(undefined, {
+  const { data: stats } = useQuery({
+    queryKey: ["customers", "stats"],
+    queryFn: getCustomerStats,
     enabled: isAuthenticated,
   });
 

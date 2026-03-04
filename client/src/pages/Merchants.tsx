@@ -38,7 +38,8 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { getLoginUrl } from "@/const";
-import { trpc } from "@/lib/trpc";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { getMerchants, getMerchantStats, updateMerchantStatus } from "@/services/merchantService";
 import {
   Building2,
   ChevronLeft,
@@ -87,29 +88,38 @@ export default function Merchants() {
 
   const limit = 10;
 
+  const queryClient = useQueryClient();
+
+  const queryParams = {
+    limit,
+    offset: page * limit,
+    status: statusFilter !== "all" ? statusFilter : undefined,
+    search: search || undefined,
+  };
+
   // Fetch merchants
-  const { data, isLoading, refetch } = trpc.merchants.list.useQuery(
-    {
-      limit,
-      offset: page * limit,
-      status: statusFilter !== "all" ? (statusFilter as any) : undefined,
-      search: search || undefined,
-    },
-    { enabled: isAuthenticated }
-  );
+  const { data, isLoading } = useQuery({
+    queryKey: ["merchants", "list", queryParams],
+    queryFn: () => getMerchants(queryParams),
+    enabled: isAuthenticated,
+  });
 
   // Fetch merchant stats
-  const { data: stats } = trpc.merchants.stats.useQuery(undefined, {
+  const { data: stats } = useQuery({
+    queryKey: ["merchants", "stats"],
+    queryFn: getMerchantStats,
     enabled: isAuthenticated,
   });
 
   // Update status mutation
-  const updateStatusMutation = trpc.merchants.updateStatus.useMutation({
+  const updateStatusMutation = useMutation({
+    mutationFn: ({ merchantId, status }: { merchantId: string; status: string }) =>
+      updateMerchantStatus(merchantId, status),
     onSuccess: () => {
       toast.success("Merchant status updated successfully");
       setShowStatusDialog(false);
       setSelectedMerchant(null);
-      refetch();
+      queryClient.invalidateQueries({ queryKey: ["merchants"] });
     },
     onError: () => {
       toast.error("Failed to update merchant status");

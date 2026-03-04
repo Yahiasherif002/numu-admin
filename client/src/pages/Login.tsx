@@ -7,32 +7,30 @@
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { trpc } from "@/lib/trpc";
-import { TRPCClientError } from "@trpc/client";
+import { login } from "@/services/authService";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Eye, EyeOff, Loader2, ShieldCheck } from "lucide-react";
 import { useState } from "react";
 import { useLocation } from "wouter";
 
 export default function Login() {
   const [, navigate] = useLocation();
-  const utils = trpc.useUtils();
+  const queryClient = useQueryClient();
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const loginMutation = trpc.auth.login.useMutation({
-    onSuccess: async () => {
-      await utils.auth.me.invalidate();
+  const loginMutation = useMutation({
+    mutationFn: ({ email, password }: { email: string; password: string }) =>
+      login(email, password),
+    onSuccess: async (user) => {
+      queryClient.setQueryData(["auth", "me"], user);
       navigate("/");
     },
-    onError: (err) => {
-      if (err instanceof TRPCClientError) {
-        setError(err.message);
-      } else {
-        setError("An unexpected error occurred. Please try again.");
-      }
+    onError: (err: Error) => {
+      setError(err.message || "An unexpected error occurred. Please try again.");
     },
   });
 

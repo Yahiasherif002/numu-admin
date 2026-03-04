@@ -1,5 +1,3 @@
-export { COOKIE_NAME, SESSION_DURATION_MS } from "@shared/const";
-
 // Generate login URL at runtime so redirect URI reflects the current origin.
 // Returns null when env vars are not configured (avoids invalid redirects in local dev).
 export const getLoginUrl = (): string | null => {
