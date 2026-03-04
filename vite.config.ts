@@ -150,9 +150,43 @@ function vitePluginManusDebugCollector(): Plugin {
   };
 }
 
-const plugins = [react(), tailwindcss(), jsxLocPlugin(), vitePluginManusRuntime(), vitePluginManusDebugCollector()];
+/**
+ * Injects Content-Security-Policy meta tag only in production builds.
+ * In dev mode, Vite's HMR requires inline scripts which CSP would block.
+ */
+function vitePluginCSP(): Plugin {
+  return {
+    name: "numu-csp",
+    transformIndexHtml(html, ctx) {
+      if (ctx.server) return html; // skip in dev
+      return {
+        html,
+        tags: [
+          {
+            tag: "meta",
+            attrs: {
+              "http-equiv": "Content-Security-Policy",
+              content: [
+                "default-src 'self'",
+                "script-src 'self'",
+                "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+                "font-src 'self' https://fonts.gstatic.com",
+                "img-src 'self' data: blob: https:",
+                "connect-src 'self' https://*.numu.store https://*.sentry.io https://*.ingest.sentry.io",
+                "worker-src 'self' blob:",
+              ].join("; ") + ";",
+            },
+            injectTo: "head",
+          },
+        ],
+      };
+    },
+  };
+}
 
-export default defineConfig({
+const plugins = [react(), tailwindcss(), jsxLocPlugin(), vitePluginManusRuntime(), vitePluginManusDebugCollector(), vitePluginCSP()];
+
+export default defineConfig(({ mode }) => ({
   plugins,
   resolve: {
     alias: {
@@ -179,4 +213,8 @@ export default defineConfig({
       deny: ["**/.*"],
     },
   },
-});
+  esbuild: {
+    drop: mode === "production" ? ["debugger"] : [],
+    pure: mode === "production" ? ["console.log", "console.debug", "console.info"] : [],
+  },
+}));
