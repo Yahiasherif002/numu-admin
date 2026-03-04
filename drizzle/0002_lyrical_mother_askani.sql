@@ -1,1 +1,0 @@
-CREATE INDEX "orders_customer_id_idx" ON "admin_orders" USING btree ("customer_id");

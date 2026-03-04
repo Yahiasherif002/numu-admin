@@ -7,7 +7,6 @@
 
 import { useAuth } from "@/_core/hooks/useAuth";
 import { cn } from "@/lib/utils";
-import { trpc } from "@/lib/trpc";
 import {
   BarChart3,
   Building2,
@@ -23,6 +22,7 @@ import {
 } from "lucide-react";
 import { Link, useLocation } from "wouter";
 import { toast } from "sonner";
+import { useState } from "react";
 
 interface NavItem {
   icon: React.ElementType;
@@ -49,18 +49,18 @@ const secondaryNavItems: NavItem[] = [
 export default function Sidebar() {
   const [location] = useLocation();
   const { user, logout } = useAuth();
-  const logoutMutation = trpc.auth.logout.useMutation({
-    onSuccess: () => {
-      logout();
-      toast.success("Logged out successfully");
-    },
-    onError: () => {
-      toast.error("Failed to logout");
-    },
-  });
+  const [loggingOut, setLoggingOut] = useState(false);
 
-  const handleLogout = () => {
-    logoutMutation.mutate();
+  const handleLogout = async () => {
+    setLoggingOut(true);
+    try {
+      await logout();
+      toast.success("Logged out successfully");
+    } catch {
+      toast.error("Failed to logout");
+    } finally {
+      setLoggingOut(false);
+    }
   };
 
   // Get user initials
@@ -158,7 +158,7 @@ export default function Sidebar() {
           </div>
           <button 
             onClick={handleLogout}
-            disabled={logoutMutation.isPending}
+            disabled={loggingOut}
             className="p-2 rounded-lg hover:bg-accent transition-colors disabled:opacity-50"
             title="Logout"
           >
