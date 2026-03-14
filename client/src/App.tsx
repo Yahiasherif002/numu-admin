@@ -15,6 +15,9 @@ import Merchants from "./pages/Merchants";
 import Orders from "./pages/Orders";
 import LandingPage from "./pages/LandingPage";
 import Settings from "./pages/Settings";
+import Analytics from "./pages/Analytics";
+import Billing from "./pages/Billing";
+import Reports from "./pages/Reports";
 import Reconciliation from "./pages/Reconciliation";
 
 // Placeholder page for features not yet implemented
@@ -65,9 +68,9 @@ function Router() {
       <Route path="/merchants">{() => <ProtectedRoute component={Merchants} />}</Route>
       <Route path="/orders">{() => <ProtectedRoute component={Orders} />}</Route>
       <Route path="/customers">{() => <ProtectedRoute component={Customers} />}</Route>
-      <Route path="/analytics">{() => <ProtectedRoute component={() => <ComingSoon title="Analytics" />} />}</Route>
-      <Route path="/billing">{() => <ProtectedRoute component={() => <ComingSoon title="Billing" />} />}</Route>
-      <Route path="/reports">{() => <ProtectedRoute component={() => <ComingSoon title="Reports" />} />}</Route>
+      <Route path="/analytics">{() => <ProtectedRoute component={Analytics} />}</Route>
+      <Route path="/billing">{() => <ProtectedRoute component={Billing} />}</Route>
+      <Route path="/reports">{() => <ProtectedRoute component={Reports} />}</Route>
       <Route path="/reconciliation">{() => <ProtectedRoute component={Reconciliation} />}</Route>
       <Route path="/settings">{() => <ProtectedRoute component={Settings} />}</Route>
       <Route path="/landing-page">{() => <ProtectedRoute component={LandingPage} />}</Route>
