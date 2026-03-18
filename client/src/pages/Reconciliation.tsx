@@ -221,7 +221,11 @@ function MismatchPanel({
                   {m.expected_amount_cents != null ? formatCents(m.expected_amount_cents) : "—"}
                 </TableCell>
                 <TableCell className="text-right tabular-nums">
-                  {m.actual_amount_cents != null ? formatCents(m.actual_amount_cents) : "—"}
+                  {m.actual_amount_cents != null
+                    ? formatCents(m.actual_amount_cents)
+                    : m.gateway?.toLowerCase() === "cod"
+                      ? "Cash"
+                      : "—"}
                 </TableCell>
                 <TableCell
                   className={`text-right tabular-nums font-medium ${
