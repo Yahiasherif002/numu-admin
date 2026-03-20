@@ -19,6 +19,7 @@ import Analytics from "./pages/Analytics";
 import Billing from "./pages/Billing";
 import Reports from "./pages/Reports";
 import Reconciliation from "./pages/Reconciliation";
+import BetaProgram from "./pages/BetaProgram";
 
 // Placeholder page for features not yet implemented
 function ComingSoon({ title }: { title: string }) {
@@ -74,6 +75,7 @@ function Router() {
       <Route path="/reconciliation">{() => <ProtectedRoute component={Reconciliation} />}</Route>
       <Route path="/settings">{() => <ProtectedRoute component={Settings} />}</Route>
       <Route path="/landing-page">{() => <ProtectedRoute component={LandingPage} />}</Route>
+      <Route path="/beta-program">{() => <ProtectedRoute component={BetaProgram} />}</Route>
       <Route path="/404" component={NotFound} />
       <Route component={NotFound} />
     </Switch>

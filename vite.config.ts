@@ -62,7 +62,7 @@ export default defineConfig(({ mode }) => ({
     ],
     proxy: {
       "/api": {
-        target: "http://188.166.156.151",
+        target: "https://numueg.app",
         changeOrigin: true,
         cookieDomainRewrite: "",
         secure: false,

@@ -464,3 +464,74 @@ export async function adminTriggerReconciliation(
     body: JSON.stringify({ target_date: targetDate }),
   });
 }
+
+// ─── Beta Program / Waitlist ─────────────────────────────────────────────────
+
+export interface WaitlistEntry {
+  id: string;
+  email: string;
+  name: string | null;
+  company_name: string | null;
+  phone: string | null;
+  status: "pending" | "invited" | "converted";
+  priority_score: number;
+  referral_code: string | null;
+  referral_count: number;
+  invite_code: string | null;
+  invited_at: string | null;
+  converted_at: string | null;
+  source: string | null;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface WaitlistListResult {
+  items: WaitlistEntry[];
+  total: number;
+  page: number;
+  page_size: number;
+  total_pages: number;
+}
+
+export async function getWaitlist(params?: {
+  status?: string;
+  page?: number;
+  page_size?: number;
+}): Promise<WaitlistListResult> {
+  const qs = new URLSearchParams();
+  if (params?.page) qs.set("page", String(params.page));
+  if (params?.page_size) qs.set("page_size", String(params.page_size));
+  if (params?.status) qs.set("status", params.status);
+  return apiClient<WaitlistListResult>(`/admin/waitlist/?${qs.toString()}`);
+}
+
+export async function directInvite(data: {
+  email: string;
+  name?: string;
+  company_name?: string;
+  notes?: string;
+}): Promise<WaitlistEntry> {
+  return apiClient<WaitlistEntry>("/admin/waitlist/direct-invite/", {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+}
+
+export async function inviteWaitlistEntry(entryId: string): Promise<WaitlistEntry> {
+  return apiClient<WaitlistEntry>("/admin/waitlist/invite/", {
+    method: "POST",
+    body: JSON.stringify({ entry_id: entryId }),
+  });
+}
+
+export async function updateWaitlistPriority(
+  entryId: string,
+  priorityScore: number,
+  notes?: string,
+): Promise<WaitlistEntry> {
+  return apiClient<WaitlistEntry>(`/admin/waitlist/${entryId}/priority/`, {
+    method: "PATCH",
+    body: JSON.stringify({ priority_score: priorityScore, notes }),
+  });
+}
