@@ -15,6 +15,7 @@ import {
   Globe,
   Home,
   LogOut,
+  Menu,
   Scale,
   Settings,
   ShoppingCart,
@@ -48,6 +49,7 @@ const mainNavItems: NavItem[] = [
 const secondaryNavItems: NavItem[] = [
   { icon: Scale, label: "Reconciliation", href: "/reconciliation" },
   { icon: FileText, label: "Reports", href: "/reports" },
+  { icon: Menu, label: "Merchant Hub Nav", href: "/merchant-hub-nav" },
   { icon: Settings, label: "Settings", href: "/settings" },
 ];
 
@@ -158,7 +160,7 @@ export default function Sidebar() {
               {user?.name || "Admin User"}
             </p>
             <p className="text-xs text-muted-foreground truncate">
-              {user?.email || "admin@numu.io"}
+              {user?.email || "admin@numueg.app"}
             </p>
           </div>
           <button 
