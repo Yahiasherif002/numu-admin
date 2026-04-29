@@ -125,3 +125,33 @@ export async function impersonateMerchant(
     { method: "POST" },
   );
 }
+
+// ─── InstaPay OCR provider routing (Phase C) ─────────────────────────
+
+/** Permitted values for ``ocr_provider`` on the admin endpoint.
+ *  Mirrors the backend's ``_VALID_OCR_PROVIDERS`` set. ``"none"`` is
+ *  the wire value for "disable OCR for this store". */
+export type InstapayOcrProvider =
+  | "none"
+  | "google_vision"
+  | "deepseek_hf"
+  | "glm_hf";
+
+export interface AdminOcrProviderResponse {
+  store_id: string;
+  /** Null when set to ``"none"``; otherwise the resolved provider key. */
+  provider: string | null;
+}
+
+export async function setInstapayOcrProvider(
+  merchantId: string,
+  provider: InstapayOcrProvider,
+): Promise<AdminOcrProviderResponse> {
+  return apiClient<AdminOcrProviderResponse>(
+    `/admin/stores/${merchantId}/instapay/ocr-provider`,
+    {
+      method: "PUT",
+      body: JSON.stringify({ provider }),
+    },
+  );
+}
