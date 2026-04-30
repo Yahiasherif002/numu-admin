@@ -272,7 +272,7 @@ export default function Settings() {
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-6">
-                <div className="grid grid-cols-2 gap-6">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
                   <div className="space-y-2">
                     <Label htmlFor="platformName">Platform Name</Label>
                     <Input
@@ -457,7 +457,7 @@ export default function Settings() {
 
                 <div className="space-y-4">
                   <h4 className="font-medium">Session Settings</h4>
-                  <div className="grid grid-cols-2 gap-4">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <div className="space-y-2">
                       <Label>Session Timeout (minutes)</Label>
                       <Input
@@ -569,7 +569,7 @@ export default function Settings() {
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-6">
-              <div className="grid grid-cols-2 gap-6">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
                 <div className="space-y-2">
                   <Label>Platform Fee (%)</Label>
                   <Input type="number" defaultValue={2.9} step={0.1} className="w-32" />
@@ -736,7 +736,7 @@ export default function Settings() {
               </DialogHeader>
 
               <div className="space-y-3 py-2">
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div className="space-y-1.5">
                     <Label htmlFor="invite-first">First name</Label>
                     <Input
