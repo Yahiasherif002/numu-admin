@@ -13,6 +13,7 @@ import DashboardLayout from "@/components/DashboardLayout";
 import { DashboardLayoutSkeleton } from "@/components/DashboardLayoutSkeleton";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Dialog,
   DialogContent,
@@ -39,7 +40,14 @@ import {
 } from "@/components/ui/table";
 import { getLoginUrl } from "@/const";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { getMerchants, getMerchantStats, updateMerchantStatus, impersonateMerchant } from "@/services/merchantService";
+import {
+  getMerchants,
+  getMerchantStats,
+  updateMerchantStatus,
+  impersonateMerchant,
+  setInstapayOcrProvider,
+  type InstapayOcrProvider,
+} from "@/services/merchantService";
 import {
   Building2,
   ChevronLeft,
@@ -48,6 +56,7 @@ import {
   ExternalLink,
   LogIn,
   MoreHorizontal,
+  ScanText,
   Search,
   ShoppingCart,
   Users,
@@ -86,6 +95,13 @@ export default function Merchants() {
   const [selectedMerchant, setSelectedMerchant] = useState<any>(null);
   const [showStatusDialog, setShowStatusDialog] = useState(false);
   const [newStatus, setNewStatus] = useState<string>("");
+
+  // Phase C — InstaPay OCR provider routing. Separate dialog from the
+  // status one because the privacy-disclosure checkbox shouldn't gate
+  // unrelated actions like status changes.
+  const [showOcrDialog, setShowOcrDialog] = useState(false);
+  const [ocrProvider, setOcrProvider] = useState<InstapayOcrProvider>("none");
+  const [ocrPrivacyAck, setOcrPrivacyAck] = useState(false);
 
   const limit = 10;
 
@@ -139,6 +155,43 @@ export default function Merchants() {
       toast.error((err as Error).message || "Failed to impersonate");
     },
   });
+
+  const ocrProviderMutation = useMutation({
+    mutationFn: ({
+      merchantId,
+      provider,
+    }: {
+      merchantId: string;
+      provider: InstapayOcrProvider;
+    }) => setInstapayOcrProvider(merchantId, provider),
+    onSuccess: () => {
+      toast.success("InstaPay OCR provider updated");
+      setShowOcrDialog(false);
+      setOcrPrivacyAck(false);
+      setSelectedMerchant(null);
+      queryClient.invalidateQueries({ queryKey: ["merchants"] });
+    },
+    onError: (err) => {
+      toast.error((err as Error).message || "Failed to update OCR provider");
+    },
+  });
+
+  const handleOcrSubmit = () => {
+    if (!selectedMerchant) return;
+    ocrProviderMutation.mutate({
+      merchantId: selectedMerchant.merchantId,
+      provider: ocrProvider,
+    });
+  };
+
+  // Privacy disclosure required when the admin selects an HF
+  // provider — those Spaces are public infrastructure and the
+  // customer's payment screenshot would be processed there.
+  const requiresPrivacyAck =
+    ocrProvider === "deepseek_hf" || ocrProvider === "glm_hf";
+  const ocrSubmitDisabled =
+    ocrProviderMutation.isPending ||
+    (requiresPrivacyAck && !ocrPrivacyAck);
 
   // Show loading skeleton while checking auth
   if (loading) {
@@ -347,6 +400,25 @@ export default function Merchants() {
                       <Button
                         variant="ghost"
                         size="icon"
+                        title="InstaPay OCR provider"
+                        onClick={() => {
+                          setSelectedMerchant(merchant);
+                          // The list endpoint doesn't surface
+                          // ocr_provider today, so we open the dialog
+                          // with "none" and the admin picks afresh.
+                          // Surface it in a follow-up by extending
+                          // the Merchant type + the backend list
+                          // response.
+                          setOcrProvider("none");
+                          setOcrPrivacyAck(false);
+                          setShowOcrDialog(true);
+                        }}
+                      >
+                        <ScanText className="w-4 h-4" />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
                         onClick={() => {
                           setSelectedMerchant(merchant);
                           setNewStatus(merchant.status);
@@ -425,6 +497,87 @@ export default function Merchants() {
               disabled={updateStatusMutation.isPending}
             >
               {updateStatusMutation.isPending ? "Updating..." : "Update Status"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* InstaPay OCR provider — admin-controlled, has cost (Vision)
+          + privacy (HF Spaces) implications, so it lives behind a
+          dedicated dialog with its own confirmation flow rather than
+          hidden inside the status dialog. */}
+      <Dialog open={showOcrDialog} onOpenChange={setShowOcrDialog}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>InstaPay OCR provider</DialogTitle>
+            <DialogDescription>
+              {selectedMerchant ? (
+                <>
+                  Pick the OCR engine that runs against{" "}
+                  <span className="font-medium">{selectedMerchant.name}</span>'s
+                  InstaPay payment-proof submissions. Merchants can't
+                  change this themselves; it's an operator-level call.
+                </>
+              ) : null}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="py-4 space-y-4">
+            <Select
+              value={ocrProvider}
+              onValueChange={(v) => {
+                setOcrProvider(v as InstapayOcrProvider);
+                setOcrPrivacyAck(false);
+              }}
+            >
+              <SelectTrigger>
+                <SelectValue placeholder="Select provider" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="none">
+                  None — disable OCR for this store
+                </SelectItem>
+                <SelectItem value="google_vision">
+                  Google Vision (paid, ~$1.50/1k, strong AR + EN)
+                </SelectItem>
+                <SelectItem value="deepseek_hf">
+                  DeepSeek-OCR (free, public HF Space, Latin only)
+                </SelectItem>
+                <SelectItem value="glm_hf">
+                  GLM-OCR (free, public HF Space, Latin only)
+                </SelectItem>
+              </SelectContent>
+            </Select>
+
+            {requiresPrivacyAck ? (
+              <div className="rounded-md border border-amber-300 bg-amber-50/60 p-3">
+                <label className="flex items-start gap-2 text-xs cursor-pointer">
+                  <Checkbox
+                    checked={ocrPrivacyAck}
+                    onCheckedChange={(v) =>
+                      setOcrPrivacyAck(v === true)
+                    }
+                  />
+                  <span>
+                    Customer payment screenshots will be sent to a public
+                    HuggingFace Space for OCR. Confirm with the merchant
+                    before enabling for production traffic.
+                  </span>
+                </label>
+              </div>
+            ) : null}
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setShowOcrDialog(false)}
+              disabled={ocrProviderMutation.isPending}
+            >
+              Cancel
+            </Button>
+            <Button onClick={handleOcrSubmit} disabled={ocrSubmitDisabled}>
+              {ocrProviderMutation.isPending
+                ? "Saving..."
+                : "Save provider"}
             </Button>
           </DialogFooter>
         </DialogContent>

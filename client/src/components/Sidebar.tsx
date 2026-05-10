@@ -17,16 +17,18 @@ import {
   LogOut,
   Mail,
   Menu,
+  Palette,
   Scale,
   Settings,
   ShoppingCart,
   Users,
   Ticket,
+  X,
   Zap,
 } from "lucide-react";
 import { Link, useLocation } from "wouter";
 import { toast } from "sonner";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 interface NavItem {
   icon: React.ElementType;
@@ -44,6 +46,7 @@ const mainNavItems: NavItem[] = [
   { icon: CreditCard, label: "Billing", href: "/billing" },
   { icon: Globe, label: "Landing Page", href: "/landing-page" },
   { icon: CreditCard, label: "Pricing Plans", href: "/pricing-plans" },
+  { icon: Palette, label: "Themes", href: "/themes" },
   { icon: Ticket, label: "Beta Program", href: "/beta-program" },
 ];
 
@@ -51,14 +54,31 @@ const secondaryNavItems: NavItem[] = [
   { icon: Scale, label: "Reconciliation", href: "/reconciliation" },
   { icon: FileText, label: "Reports", href: "/reports" },
   { icon: Menu, label: "Merchant Hub Nav", href: "/merchant-hub-nav" },
+  { icon: Mail, label: "Email Templates", href: "/email-templates" },
   { icon: Settings, label: "Settings", href: "/settings" },
   { icon: Mail, label: "Email Templates", href: "/email-templates" },
 ];
 
-export default function Sidebar() {
+interface SidebarProps {
+  /** Mobile drawer state — controlled by DashboardLayout. Desktop
+   *  ignores this and always renders the sidebar inline. */
+  mobileOpen?: boolean;
+  onMobileClose?: () => void;
+}
+
+export default function Sidebar({ mobileOpen = false, onMobileClose }: SidebarProps = {}) {
   const [location] = useLocation();
   const { user, logout } = useAuth();
   const [loggingOut, setLoggingOut] = useState(false);
+
+  // Auto-close the drawer on route change so tapping a nav item
+  // navigates AND dismisses the drawer in the same gesture.
+  useEffect(() => {
+    if (mobileOpen) onMobileClose?.();
+    // We intentionally don't include onMobileClose in the deps — it's
+    // expected to be stable from the parent. Only the route matters.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location]);
 
   const handleLogout = async () => {
     setLoggingOut(true);
@@ -83,16 +103,47 @@ export default function Sidebar() {
   };
 
   return (
-    <aside className="fixed left-0 top-0 z-40 h-screen w-64 bg-card border-r border-border/50 shadow-soft flex flex-col">
+    <>
+      {/* Mobile backdrop — click to dismiss. ``lg:hidden`` so the
+          desktop layout never sees it. */}
+      {mobileOpen ? (
+        <button
+          type="button"
+          aria-label="Close navigation"
+          onClick={onMobileClose}
+          className="lg:hidden fixed inset-0 z-30 bg-foreground/40 backdrop-blur-[2px]"
+        />
+      ) : null}
+
+      <aside
+        className={cn(
+          // Drawer transform: hidden off-screen on mobile, visible
+          // when ``mobileOpen``. On lg+ the sidebar is always
+          // ``translate-x-0`` regardless of the prop.
+          "fixed left-0 top-0 z-40 h-screen w-64 bg-card border-r border-border/50 shadow-soft flex flex-col transition-transform duration-200 ease-out",
+          "lg:translate-x-0",
+          mobileOpen ? "translate-x-0" : "-translate-x-full",
+        )}
+      >
       {/* Logo */}
       <div className="flex items-center gap-3 px-6 py-5 border-b border-border/50">
         <div className="w-10 h-10 bg-primary rounded-xl flex items-center justify-center">
           <Zap className="w-5 h-5 text-primary-foreground" />
         </div>
-        <div>
+        <div className="flex-1 min-w-0">
           <h1 className="font-bold text-lg text-foreground">NUMU</h1>
           <p className="text-xs text-muted-foreground">Admin Backoffice</p>
         </div>
+        {/* Close button — mobile only. Desktop never has the drawer
+            state to "close". */}
+        <button
+          type="button"
+          onClick={onMobileClose}
+          className="lg:hidden p-1.5 -mr-1.5 rounded-md text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
+          aria-label="Close navigation"
+        >
+          <X className="w-4 h-4" />
+        </button>
       </div>
 
       {/* Main Navigation */}
@@ -176,5 +227,6 @@ export default function Sidebar() {
         </div>
       </div>
     </aside>
+    </>
   );
 }

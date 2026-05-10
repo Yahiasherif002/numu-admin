@@ -33,6 +33,11 @@ import {
   revokeAdmin,
   type AdminUserItem,
 } from "@/services/adminUsersApi";
+import {
+  getPlatformSettings,
+  updatePlatformSettings,
+  type PlatformSettings,
+} from "@/services/platformSettingsApi";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Bell,
@@ -52,9 +57,20 @@ import {
 import { useState } from "react";
 import { toast } from "sonner";
 
+const DEFAULT_SETTINGS: PlatformSettings = {
+  platform_name: "NUMU",
+  support_email: "support@numueg.app",
+  default_currency: "USD",
+  enable_new_merchant_signups: true,
+  require_email_verification: true,
+  enable_two_factor_auth: false,
+  maintenance_mode: false,
+  session_timeout_minutes: 60,
+  max_login_attempts: 5,
+};
+
 export default function Settings() {
   const { user, loading, isAuthenticated } = useAuth();
-  const [saving, setSaving] = useState(false);
   const queryClient = useQueryClient();
 
   // ── Admin Users ─────────────────────────────────────────────────────────
@@ -123,16 +139,70 @@ export default function Settings() {
     }
   };
 
-  // Platform settings state
-  const [platformSettings, setPlatformSettings] = useState({
-    platformName: "NUMU",
-    supportEmail: "support@numueg.app",
-    defaultCurrency: "USD",
-    enableNewMerchantSignups: true,
-    requireEmailVerification: true,
-    enableTwoFactorAuth: false,
-    maintenanceMode: false,
+  // Platform settings — fetched from /admin/platform-settings, edited
+  // locally, saved via a mutation. `draft` is the in-progress edit state;
+  // we seed it from the query result once on first load.
+  const settingsQuery = useQuery({
+    queryKey: ["platform-settings"],
+    queryFn: getPlatformSettings,
+    enabled: isAuthenticated,
   });
+
+  const [draft, setDraft] = useState<PlatformSettings | null>(null);
+  const [isDirty, setIsDirty] = useState(false);
+
+  // Seed draft the first time we receive server data. Subsequent server
+  // refetches won't clobber in-progress edits.
+  if (draft === null && settingsQuery.data) {
+    // Safe: React tolerates setState during render when it ends the render
+    // immediately and re-renders with the new state.
+    setDraft(settingsQuery.data);
+  }
+
+  const platformSettings = draft ?? settingsQuery.data ?? DEFAULT_SETTINGS;
+
+  const setField = <K extends keyof PlatformSettings>(
+    key: K,
+    value: PlatformSettings[K],
+  ) => {
+    setDraft((prev) => {
+      const base = prev ?? settingsQuery.data ?? DEFAULT_SETTINGS;
+      return { ...base, [key]: value };
+    });
+    setIsDirty(true);
+  };
+
+  const saveMutation = useMutation({
+    mutationFn: (patch: Partial<PlatformSettings>) =>
+      updatePlatformSettings(patch),
+    onSuccess: (saved) => {
+      queryClient.setQueryData(["platform-settings"], saved);
+      setDraft(saved);
+      setIsDirty(false);
+      toast.success("Settings saved");
+    },
+    onError: (err) =>
+      toast.error((err as Error).message || "Failed to save settings"),
+  });
+
+  const handleSave = () => {
+    if (!draft) return;
+    // Send only changed fields — smaller payload + lets the server ignore
+    // unchanged values.
+    const original = settingsQuery.data ?? DEFAULT_SETTINGS;
+    const patch: Partial<PlatformSettings> = {};
+    (Object.keys(draft) as (keyof PlatformSettings)[]).forEach((k) => {
+      if (draft[k] !== original[k]) {
+        (patch as Record<string, unknown>)[k] = draft[k];
+      }
+    });
+    if (Object.keys(patch).length === 0) {
+      toast.message("Nothing to save");
+      return;
+    }
+    saveMutation.mutate(patch);
+  };
+  const saving = saveMutation.isPending;
 
   // Notification settings state
   const [notificationSettings, setNotificationSettings] = useState({
@@ -158,14 +228,6 @@ export default function Settings() {
     }
     // No OAuth configured (local dev) — render page with empty data
   }
-
-  const handleSave = async () => {
-    setSaving(true);
-    // Simulate API call
-    await new Promise((resolve) => setTimeout(resolve, 1000));
-    setSaving(false);
-    toast.success("Settings saved successfully");
-  };
 
   return (
     <DashboardLayout
@@ -194,6 +256,10 @@ export default function Settings() {
             <Users className="w-4 h-4" />
             Admin Users
           </TabsTrigger>
+          <TabsTrigger value="meta" className="gap-2">
+            <Zap className="w-4 h-4" />
+            Meta Credentials
+          </TabsTrigger>
         </TabsList>
 
         {/* General Settings */}
@@ -210,15 +276,14 @@ export default function Settings() {
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-6">
-                <div className="grid grid-cols-2 gap-6">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
                   <div className="space-y-2">
                     <Label htmlFor="platformName">Platform Name</Label>
                     <Input
                       id="platformName"
-                      value={platformSettings.platformName}
-                      onChange={(e) =>
-                        setPlatformSettings((s) => ({ ...s, platformName: e.target.value }))
-                      }
+                      value={platformSettings.platform_name}
+                      onChange={(e) => setField("platform_name", e.target.value)}
+                      disabled={settingsQuery.isLoading}
                     />
                   </div>
                   <div className="space-y-2">
@@ -226,10 +291,9 @@ export default function Settings() {
                     <Input
                       id="supportEmail"
                       type="email"
-                      value={platformSettings.supportEmail}
-                      onChange={(e) =>
-                        setPlatformSettings((s) => ({ ...s, supportEmail: e.target.value }))
-                      }
+                      value={platformSettings.support_email}
+                      onChange={(e) => setField("support_email", e.target.value)}
+                      disabled={settingsQuery.isLoading}
                     />
                   </div>
                 </div>
@@ -238,11 +302,15 @@ export default function Settings() {
                   <Label htmlFor="defaultCurrency">Default Currency</Label>
                   <Input
                     id="defaultCurrency"
-                    value={platformSettings.defaultCurrency}
+                    value={platformSettings.default_currency}
                     onChange={(e) =>
-                      setPlatformSettings((s) => ({ ...s, defaultCurrency: e.target.value }))
+                      setField(
+                        "default_currency",
+                        e.target.value.toUpperCase().slice(0, 3),
+                      )
                     }
                     className="w-32"
+                    disabled={settingsQuery.isLoading}
                   />
                 </div>
 
@@ -257,10 +325,11 @@ export default function Settings() {
                       </p>
                     </div>
                     <Switch
-                      checked={platformSettings.enableNewMerchantSignups}
+                      checked={platformSettings.enable_new_merchant_signups}
                       onCheckedChange={(checked) =>
-                        setPlatformSettings((s) => ({ ...s, enableNewMerchantSignups: checked }))
+                        setField("enable_new_merchant_signups", checked)
                       }
+                      disabled={settingsQuery.isLoading}
                     />
                   </div>
 
@@ -272,10 +341,11 @@ export default function Settings() {
                       </p>
                     </div>
                     <Switch
-                      checked={platformSettings.requireEmailVerification}
+                      checked={platformSettings.require_email_verification}
                       onCheckedChange={(checked) =>
-                        setPlatformSettings((s) => ({ ...s, requireEmailVerification: checked }))
+                        setField("require_email_verification", checked)
                       }
+                      disabled={settingsQuery.isLoading}
                     />
                   </div>
 
@@ -287,19 +357,33 @@ export default function Settings() {
                       </p>
                     </div>
                     <Switch
-                      checked={platformSettings.maintenanceMode}
+                      checked={platformSettings.maintenance_mode}
                       onCheckedChange={(checked) =>
-                        setPlatformSettings((s) => ({ ...s, maintenanceMode: checked }))
+                        setField("maintenance_mode", checked)
                       }
+                      disabled={settingsQuery.isLoading}
                     />
                   </div>
                 </div>
               </CardContent>
             </Card>
 
-            <div className="flex justify-end">
-              <Button onClick={handleSave} disabled={saving}>
-                {saving ? "Saving..." : "Save Changes"}
+            <div className="flex items-center justify-end gap-3">
+              {isDirty && (
+                <span className="text-xs text-amber-600">Unsaved changes</span>
+              )}
+              <Button
+                onClick={handleSave}
+                disabled={saving || !isDirty || settingsQuery.isLoading}
+              >
+                {saving ? (
+                  <>
+                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    Saving…
+                  </>
+                ) : (
+                  "Save Changes"
+                )}
               </Button>
             </div>
           </div>
@@ -365,10 +449,11 @@ export default function Settings() {
                     </p>
                   </div>
                   <Switch
-                    checked={platformSettings.enableTwoFactorAuth}
+                    checked={platformSettings.enable_two_factor_auth}
                     onCheckedChange={(checked) =>
-                      setPlatformSettings((s) => ({ ...s, enableTwoFactorAuth: checked }))
+                      setField("enable_two_factor_auth", checked)
                     }
+                    disabled={settingsQuery.isLoading}
                   />
                 </div>
 
@@ -376,17 +461,62 @@ export default function Settings() {
 
                 <div className="space-y-4">
                   <h4 className="font-medium">Session Settings</h4>
-                  <div className="grid grid-cols-2 gap-4">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <div className="space-y-2">
                       <Label>Session Timeout (minutes)</Label>
-                      <Input type="number" defaultValue={60} className="w-32" />
+                      <Input
+                        type="number"
+                        min={5}
+                        max={1440}
+                        value={platformSettings.session_timeout_minutes}
+                        onChange={(e) =>
+                          setField(
+                            "session_timeout_minutes",
+                            Math.max(5, Math.min(1440, Number(e.target.value) || 60)),
+                          )
+                        }
+                        className="w-32"
+                        disabled={settingsQuery.isLoading}
+                      />
                     </div>
                     <div className="space-y-2">
                       <Label>Max Login Attempts</Label>
-                      <Input type="number" defaultValue={5} className="w-32" />
+                      <Input
+                        type="number"
+                        min={1}
+                        max={100}
+                        value={platformSettings.max_login_attempts}
+                        onChange={(e) =>
+                          setField(
+                            "max_login_attempts",
+                            Math.max(1, Math.min(100, Number(e.target.value) || 5)),
+                          )
+                        }
+                        className="w-32"
+                        disabled={settingsQuery.isLoading}
+                      />
                     </div>
                   </div>
                 </div>
+                {isDirty && (
+                  <div className="flex items-center justify-end gap-3 pt-2">
+                    <span className="text-xs text-amber-600">Unsaved changes</span>
+                    <Button
+                      size="sm"
+                      onClick={handleSave}
+                      disabled={saving || settingsQuery.isLoading}
+                    >
+                      {saving ? (
+                        <>
+                          <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                          Saving…
+                        </>
+                      ) : (
+                        "Save Changes"
+                      )}
+                    </Button>
+                  </div>
+                )}
               </CardContent>
             </Card>
 
@@ -443,7 +573,7 @@ export default function Settings() {
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-6">
-              <div className="grid grid-cols-2 gap-6">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
                 <div className="space-y-2">
                   <Label>Platform Fee (%)</Label>
                   <Input type="number" defaultValue={2.9} step={0.1} className="w-32" />
@@ -610,7 +740,7 @@ export default function Settings() {
               </DialogHeader>
 
               <div className="space-y-3 py-2">
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div className="space-y-1.5">
                     <Label htmlFor="invite-first">First name</Label>
                     <Input
@@ -690,6 +820,69 @@ export default function Settings() {
               </DialogFooter>
             </DialogContent>
           </Dialog>
+        </TabsContent>
+
+        {/* Meta Credentials */}
+        <TabsContent value="meta">
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Zap className="w-5 h-5" />
+                Meta App Credentials
+              </CardTitle>
+              <CardDescription>
+                Configure Facebook, Instagram, and WhatsApp integration credentials
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-6">
+              <div className="grid gap-4 max-w-md">
+                <div className="space-y-2">
+                  <Label htmlFor="metaAppId">META_APP_ID</Label>
+                  <Input
+                    id="metaAppId"
+                    placeholder="Enter your Meta App ID"
+                    value={platformSettings.platformName}
+                    onChange={(e) =>
+                      setPlatformSettings((s) => ({ ...s, platformName: e.target.value }))
+                    }
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="metaAppSecret">META_APP_SECRET</Label>
+                  <Input
+                    id="metaAppSecret"
+                    type="password"
+                    placeholder="Enter your Meta App Secret"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="webhookVerifyToken">META_WEBHOOK_VERIFY_TOKEN</Label>
+                  <Input
+                    id="webhookVerifyToken"
+                    placeholder="Enter webhook verify token"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="loginConfigId">META_LOGIN_CONFIG_ID</Label>
+                  <Input
+                    id="loginConfigId"
+                    placeholder="Enter Login Config ID"
+                  />
+                </div>
+              </div>
+              <div className="flex items-center gap-2 pt-4">
+                <Button onClick={handleSave} disabled={saving}>
+                  {saving ? "Saving..." : "Save Credentials"}
+                </Button>
+                <Button variant="outline" onClick={() => toast.info("Test connection coming soon")}>
+                  Test Connection
+                </Button>
+              </div>
+              <p className="text-sm text-muted-foreground">
+                These credentials are used for Meta (Facebook, Instagram, WhatsApp) OAuth flows and webhook verification.
+              </p>
+            </CardContent>
+          </Card>
         </TabsContent>
       </Tabs>
     </DashboardLayout>
