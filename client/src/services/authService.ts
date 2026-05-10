@@ -4,7 +4,7 @@
  * CSRF token is fetched after login so subsequent requests pass validation.
  */
 
-import { apiClient, API_BASE } from "@/lib/apiClient";
+import { apiClient, getApiBase } from "@/lib/apiClient";
 import { initCSRF, clearCSRFToken } from "@/lib/csrf";
 
 export interface AdminUser {
@@ -58,7 +58,7 @@ export async function login(
   password: string,
 ): Promise<AdminUser> {
   // Use raw fetch (not apiClient) because this runs before CSRF token exists
-  const res = await fetch(`${API_BASE}/auth/login`, {
+  const res = await fetch(`${getApiBase()}/auth/login`, {
     method: "POST",
     credentials: "include",
     headers: { "Content-Type": "application/json" },
@@ -76,7 +76,7 @@ export async function login(
   // Verify admin role
   if (user.role !== "super_admin" && user.role !== "admin") {
     // Logout since we set cookies for a non-admin user
-    await fetch(`${API_BASE}/auth/logout`, {
+    await fetch(`${getApiBase()}/auth/logout`, {
       method: "POST",
       credentials: "include",
     }).catch(() => {});
@@ -90,7 +90,7 @@ export async function login(
 }
 
 export async function logout(): Promise<void> {
-  await fetch(`${API_BASE}/auth/logout`, {
+  await fetch(`${getApiBase()}/auth/logout`, {
     method: "POST",
     credentials: "include",
   }).catch(() => {});
@@ -101,7 +101,7 @@ export async function getMe(): Promise<AdminUser> {
   // Use raw fetch — NOT apiClient — to avoid the 401 → redirect loop.
   // This is called on mount to check session validity; a 401 here simply
   // means "not logged in", not "redirect now".
-  const res = await fetch(`${API_BASE}/auth/me`, {
+  const res = await fetch(`${getApiBase()}/auth/me`, {
     credentials: "include",
     headers: { "Content-Type": "application/json" },
   });

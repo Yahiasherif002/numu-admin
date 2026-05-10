@@ -5,13 +5,7 @@
  */
 
 import { initCSRF, clearCSRFToken } from "./csrf";
-
-if (!import.meta.env.VITE_API_URL) {
-  throw new Error(
-    "VITE_API_URL is not set. Refusing to start without a configured API endpoint."
-  );
-}
-const API_BASE = import.meta.env.VITE_API_URL;
+import { getApiBase } from "@/lib/env";
 
 export interface AdminUser {
   id: string;
@@ -36,7 +30,7 @@ export async function login(
   email: string,
   password: string
 ): Promise<AuthResponse> {
-  const res = await fetch(`${API_BASE}/auth/login`, {
+  const res = await fetch(`${getApiBase()}/auth/login`, {
     method: "POST",
     credentials: "include",
     headers: { "Content-Type": "application/json" },
@@ -57,7 +51,7 @@ export async function login(
 }
 
 export async function logout(): Promise<void> {
-  await fetch(`${API_BASE}/auth/logout`, {
+  await fetch(`${getApiBase()}/auth/logout`, {
     method: "POST",
     credentials: "include",
   });
@@ -66,7 +60,7 @@ export async function logout(): Promise<void> {
 
 export async function getMe(): Promise<AdminUser> {
   // Use raw fetch — NOT apiClient — to avoid the 401 → redirect loop.
-  const res = await fetch(`${API_BASE}/auth/me`, {
+  const res = await fetch(`${getApiBase()}/auth/me`, {
     credentials: "include",
     headers: { "Content-Type": "application/json" },
   });
