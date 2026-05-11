@@ -16,6 +16,7 @@ import {
   Home,
   LogOut,
   Menu,
+  Package,
   Palette,
   Scale,
   Settings,
@@ -46,6 +47,7 @@ const mainNavItems: NavItem[] = [
   { icon: Globe, label: "Landing Page", href: "/landing-page" },
   { icon: CreditCard, label: "Pricing Plans", href: "/pricing-plans" },
   { icon: Palette, label: "Themes", href: "/themes" },
+  { icon: Package, label: "Marketplace Reviews", href: "/marketplace-reviews" },
   { icon: Ticket, label: "Beta Program", href: "/beta-program" },
 ];
 
