@@ -22,6 +22,7 @@ import Billing from "./pages/Billing";
 import Reports from "./pages/Reports";
 import Reconciliation from "./pages/Reconciliation";
 import BetaProgram from "./pages/BetaProgram";
+import PlanLimits from "./pages/PlanLimits";
 import PricingPlans from "./pages/PricingPlans";
 import MerchantHubNav from "./pages/MerchantHubNav";
 import Themes from "./pages/Themes";
@@ -108,6 +109,9 @@ function Router() {
       </Route>
       <Route path="/pricing-plans">
         {() => <ProtectedRoute component={PricingPlans} />}
+      </Route>
+      <Route path="/plan-limits">
+        {() => <ProtectedRoute component={PlanLimits} />}
       </Route>
       <Route path="/merchant-hub-nav">
         {() => <ProtectedRoute component={MerchantHubNav} />}

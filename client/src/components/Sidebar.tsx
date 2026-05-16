@@ -47,6 +47,7 @@ const mainNavItems: NavItem[] = [
   { icon: CreditCard, label: "Billing", href: "/billing" },
   { icon: Globe, label: "Landing Page", href: "/landing-page" },
   { icon: CreditCard, label: "Pricing Plans", href: "/pricing-plans" },
+  { icon: Settings, label: "Plan Limits", href: "/plan-limits" },
   { icon: Palette, label: "Themes", href: "/themes" },
   { icon: Package, label: "Marketplace Reviews", href: "/marketplace-reviews" },
   { icon: Ticket, label: "Beta Program", href: "/beta-program" },
