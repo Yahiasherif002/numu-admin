@@ -124,6 +124,7 @@ export const NAV_REGISTRY: NavRegistryEntry[] = [
   { key: "notifications", en: "Notifications", ar: "الإشعارات" },
   { key: "settings", en: "Settings", ar: "الإعدادات" },
   { key: "store", en: "Store settings", ar: "إعدادات المتجر" },
+  { key: "assistant", en: "AI Assistant (floating widget)", ar: "المساعد الذكي" },
 ];
 
 // Quick label lookup by key. Derived from NAV_REGISTRY so a new entry above
