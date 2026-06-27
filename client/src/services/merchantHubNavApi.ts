@@ -57,6 +57,7 @@ export const TAB_LABELS: Record<string, { en: string; ar: string }> = {
   notifications: { en: "Notifications", ar: "الإشعارات" },
   settings: { en: "Settings", ar: "الإعدادات" },
   store: { en: "Store Profile", ar: "إعدادات المتجر" },
+  assistant: { en: "AI Assistant (floating widget)", ar: "المساعد الذكي" },
 };
 
 // Fallback used when the backend hasn't shipped `/admin/merchant-hub-nav` yet.

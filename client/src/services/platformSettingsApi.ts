@@ -16,7 +16,6 @@ export interface PlatformSettings {
   maintenance_mode: boolean;
   session_timeout_minutes: number;
   max_login_attempts: number;
-  assistant_enabled: boolean;
 }
 
 export type PlatformSettingsUpdate = Partial<PlatformSettings>;
