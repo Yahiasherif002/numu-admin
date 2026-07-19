@@ -482,16 +482,34 @@ function SettingsTab() {
           <p className="text-sm font-medium">Payment methods</p>
           {(
             [
-              ["card_enabled", "Card (Kashier)"],
-              ["vodafone_cash_enabled", "Vodafone Cash (manual)"],
-              ["instapay_enabled", "InstaPay (manual)"],
+              ["card_enabled", "Card (Kashier)", "card"],
+              ["vodafone_cash_enabled", "Vodafone Cash (manual)", "vodafone_cash"],
+              ["instapay_enabled", "InstaPay (manual)", "instapay"],
             ] as const
-          ).map(([key, label]) => (
-            <div key={key} className="flex items-center justify-between gap-3">
-              <p className="text-sm">{label}</p>
-              <Switch checked={form[key]} onCheckedChange={(v) => set(key, v)} />
-            </div>
-          ))}
+          ).map(([key, label, method]) => {
+            const configured = form.methods_configured?.[method] ?? true;
+            return (
+              <div key={key} className="flex items-center justify-between gap-3">
+                <div className="flex items-center gap-2 min-w-0">
+                  <p className="text-sm">{label}</p>
+                  {form[key] && !configured && (
+                    <Badge
+                      variant="outline"
+                      className="shrink-0 border-amber-300 text-amber-700 dark:text-amber-300 text-[10px] font-normal"
+                    >
+                      not configured — hidden from merchants
+                    </Badge>
+                  )}
+                </div>
+                <Switch checked={form[key]} onCheckedChange={(v) => set(key, v)} />
+              </div>
+            );
+          })}
+          <p className="text-xs text-muted-foreground">
+            A method reaches merchants only when it's on AND configured: set the
+            Vodafone Cash number / InstaPay IPA below; card needs platform
+            Kashier credentials on the server.
+          </p>
         </CardContent>
       </Card>
 
@@ -551,6 +569,20 @@ function SettingsTab() {
                 }
               />
             </div>
+            <div className="space-y-1.5">
+              <Label>Minimum top-up (EGP)</Label>
+              <Input
+                type="number"
+                min={1}
+                value={(form.min_topup_cents ?? 5000) / 100}
+                onChange={(e) =>
+                  set("min_topup_cents", Math.round(Number(e.target.value) * 100))
+                }
+              />
+              <p className="text-xs text-muted-foreground">
+                Merchants can't top up less than this
+              </p>
+            </div>
           </div>
         </CardContent>
       </Card>
@@ -596,7 +628,15 @@ function SettingsTab() {
       </Card>
 
       <div className="lg:col-span-2 flex justify-end">
-        <Button onClick={() => saveMutation.mutate(form)} disabled={saveMutation.isPending}>
+        <Button
+          onClick={() => {
+            // methods_configured / effective_methods are GET-only computed
+            // status — never part of the patch.
+            const { methods_configured, effective_methods, ...patch } = form;
+            saveMutation.mutate(patch);
+          }}
+          disabled={saveMutation.isPending}
+        >
           {saveMutation.isPending ? (
             <Loader2 className="h-4 w-4 me-1.5 animate-spin" />
           ) : (

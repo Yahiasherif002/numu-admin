@@ -34,12 +34,21 @@ export interface WalletAdminSettings {
   commission_bps_default: number | null;
   negative_allowance_cents: number;
   low_balance_threshold_cents: number;
+  /** Admin-controlled minimum a merchant can top up (integer cents). */
+  min_topup_cents: number;
   vodafone_cash_number: string | null;
   instapay_ipa: string | null;
   instapay_display_name: string | null;
+  /** Per-method platform configuration status (GET only): VC number /
+   * InstaPay IPA saved here, Kashier creds on the server env. */
+  methods_configured?: Record<"card" | "vodafone_cash" | "instapay", boolean>;
+  /** enabled AND configured — what merchants are actually offered (GET only). */
+  effective_methods?: Record<"card" | "vodafone_cash" | "instapay", boolean>;
 }
 
-export type WalletSettingsPatch = Partial<WalletAdminSettings>;
+export type WalletSettingsPatch = Partial<
+  Omit<WalletAdminSettings, "methods_configured" | "effective_methods">
+>;
 
 export function getWalletSettings(): Promise<WalletAdminSettings> {
   return apiClient<WalletAdminSettings>("/admin/wallets/settings");
