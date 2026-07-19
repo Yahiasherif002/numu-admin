@@ -20,6 +20,7 @@ import {
   MessageCircle,
   Palette,
   Scale,
+  Wallet,
   ServerCog,
   Settings,
   ShieldCheck,
@@ -83,6 +84,7 @@ const platformNavItems: NavItem[] = [
 ];
 
 const secondaryNavItems: NavItem[] = [
+  { icon: Wallet, label: "Merchant Wallets", href: "/wallets" },
   { icon: Scale, label: "Reconciliation", href: "/reconciliation" },
   { icon: FileText, label: "Reports", href: "/reports" },
   { icon: Menu, label: "Merchant Hub Nav", href: "/merchant-hub-nav" },
