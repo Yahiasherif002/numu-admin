@@ -28,6 +28,8 @@ import MerchantHubNav from "./pages/MerchantHubNav";
 import Themes from "./pages/Themes";
 import MarketplaceReviews from "./pages/MarketplaceReviews";
 import MarketplaceReview from "./pages/MarketplaceReview";
+import WalletAdmin from "./pages/WalletAdmin";
+import WhatsappAccessRequests from "./pages/WhatsappAccessRequests";
 import ThemesPage from "./pages/marketplace/ThemesPage";
 import ThemeDetailPage from "./pages/marketplace/ThemeDetailPage";
 import StoreSnapshotsPage from "./pages/marketplace/StoreSnapshotsPage";
@@ -144,6 +146,12 @@ function Router() {
       </Route>
       <Route path="/marketplace/review">
         {() => <ProtectedRoute component={MarketplaceReview} />}
+      </Route>
+      <Route path="/whatsapp-access">
+        {() => <ProtectedRoute component={WhatsappAccessRequests} />}
+      </Route>
+      <Route path="/wallets">
+        {() => <ProtectedRoute component={WalletAdmin} />}
       </Route>
       <Route path="/marketplace/themes">
         {() => <ProtectedRoute component={ThemesPage} />}
