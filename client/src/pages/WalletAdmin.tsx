@@ -574,7 +574,7 @@ function SettingsTab() {
               <Input
                 type="number"
                 min={1}
-                value={form.min_topup_cents / 100}
+                value={(form.min_topup_cents ?? 5000) / 100}
                 onChange={(e) =>
                   set("min_topup_cents", Math.round(Number(e.target.value) * 100))
                 }
