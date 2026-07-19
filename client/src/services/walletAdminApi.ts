@@ -26,6 +26,8 @@ import { apiClient } from "./api";
 export interface WalletAdminSettings {
   topups_enabled: boolean;
   checkout_gate_enabled: boolean;
+  /** New tenants can't take orders until they pick a plan / Pay as you Grow. */
+  golive_gate_enabled: boolean;
   card_enabled: boolean;
   vodafone_cash_enabled: boolean;
   instapay_enabled: boolean;

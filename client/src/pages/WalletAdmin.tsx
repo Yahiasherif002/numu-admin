@@ -461,7 +461,12 @@ function SettingsTab() {
               [
                 "checkout_gate_enabled",
                 "Checkout gate",
-                "Block storefront checkout when a payg wallet is below the allowance",
+                "Block storefront checkout when a Pay-as-you-Grow wallet is below the allowance",
+              ],
+              [
+                "golive_gate_enabled",
+                "Go-live gate",
+                "New merchants can build but can't take orders until they pick a plan or Pay as you Grow (existing tenants are grandfathered)",
               ],
             ] as const
           ).map(([key, label, desc]) => (
@@ -494,8 +499,9 @@ function SettingsTab() {
         <CardHeader>
           <CardTitle className="text-base">Commission &amp; thresholds</CardTitle>
           <CardDescription>
-            The default rate applies to commission-bearing (payg) plans only —
-            per-tenant overrides win; subscription plans are never charged.
+            The default rate applies to NEW Pay-as-you-Grow signups — each
+            merchant's rate is locked at activation (change it per tenant from
+            the Wallets tab). Subscription plans are never charged.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
