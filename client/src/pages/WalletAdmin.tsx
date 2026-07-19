@@ -151,7 +151,21 @@ function ProofCard({
           </div>
           <div className="text-end shrink-0">
             <p className="text-lg font-bold tabular-nums">{fmtEGP(item.amount_cents)}</p>
-            <p className="text-[11px] text-muted-foreground">on hold for merchant</p>
+            <p
+              className={`text-[11px] ${
+                item.status === "approved" || item.status === "auto_approved"
+                  ? "text-green-600"
+                  : item.status === "rejected"
+                    ? "text-red-600"
+                    : "text-muted-foreground"
+              }`}
+            >
+              {item.status === "approved" || item.status === "auto_approved"
+                ? "credited to merchant"
+                : item.status === "rejected"
+                  ? "not credited"
+                  : "on hold for merchant"}
+            </p>
           </div>
         </div>
       </CardHeader>
