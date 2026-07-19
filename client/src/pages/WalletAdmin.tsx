@@ -101,6 +101,21 @@ const METHOD_LABEL: Record<string, string> = {
   card: "Card",
 };
 
+// Human explanations for auto-verification block reasons. Anything not
+// mapped falls back to the slug with spaces.
+const BLOCK_REASON_LABEL: Record<string, string> = {
+  ocr_no_amount_found:
+    "OCR read the image but found no payment amount — likely not a receipt",
+  ocr_verification_unavailable: "OCR could not read the image",
+  amount_above_threshold: "amount above the auto-approve threshold",
+  amount_mismatch: "declared amount doesn't match the top-up",
+  ocr_amount_mismatch: "OCR amount doesn't match the top-up",
+  ocr_ipa_mismatch: "OCR payee doesn't match our receiving account",
+  note_missing_reference: "transfer note doesn't contain the reference code",
+  daily_cap_exceeded: "daily auto-approve cap reached",
+  daily_count_exceeded: "daily auto-approve count reached",
+};
+
 // ─── Review queue ────────────────────────────────────────────────────────────
 
 const PROOF_FILTERS: { value: ProofStatus; label: string }[] = [
@@ -195,7 +210,7 @@ function ProofCard({
             <div className="flex flex-wrap gap-1">
               {item.block_reasons.map((r) => (
                 <Badge key={r} variant="outline" className="text-[10px] border-amber-300 text-amber-800 dark:text-amber-300">
-                  {r.replaceAll("_", " ")}
+                  {BLOCK_REASON_LABEL[r] ?? r.replaceAll("_", " ")}
                 </Badge>
               ))}
             </div>
