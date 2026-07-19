@@ -13,6 +13,7 @@ import EmailTemplateEditor from "./pages/EmailTemplateEditor";
 import EmailTemplates from "./pages/EmailTemplates";
 import Home from "./pages/Home";
 import Login from "./pages/Login";
+import MerchantDetail from "./pages/MerchantDetail";
 import Merchants from "./pages/Merchants";
 import Orders from "./pages/Orders";
 import LandingPage from "./pages/LandingPage";
@@ -86,6 +87,9 @@ function Router() {
       <Route path="/">{() => <ProtectedRoute component={Home} />}</Route>
       <Route path="/merchants">
         {() => <ProtectedRoute component={Merchants} />}
+      </Route>
+      <Route path="/merchants/:merchantId">
+        {() => <ProtectedRoute component={MerchantDetail} />}
       </Route>
       <Route path="/orders">
         {() => <ProtectedRoute component={Orders} />}
