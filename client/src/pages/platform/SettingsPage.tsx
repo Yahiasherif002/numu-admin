@@ -49,10 +49,19 @@ import { Switch } from "@/components/ui/switch";
 import {
   getPlatformConfig,
   setAppEmbedsTabEnabled,
+  setApplePayEnabled,
+  setCheckoutIdentityEnabled,
   setDefaultTheme,
 } from "@/services/platformConfigApi";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, Loader2, Puzzle, Save } from "lucide-react";
+import {
+  AlertTriangle,
+  CreditCard,
+  Loader2,
+  Puzzle,
+  Save,
+  ShieldCheck,
+} from "lucide-react";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import {
@@ -119,6 +128,53 @@ export default function PlatformSettingsPage() {
     },
   });
 
+  // Checkout-identity rollout gate (WhatsApp OTP at checkout + save-cart
+  // nudge). High-blast-radius: ON affects every GOWA store at once.
+  const checkoutIdentityMutation = useMutation({
+    mutationFn: (enabled: boolean) => setCheckoutIdentityEnabled(enabled),
+    onSuccess: (snap) => {
+      queryClient.invalidateQueries({ queryKey: PLATFORM_CONFIG_QUERY_KEY });
+      toast.success(
+        snap.checkout_identity_enabled
+          ? "Checkout phone verification is now LIVE for GOWA stores"
+          : "Checkout phone verification disabled platform-wide",
+      );
+    },
+    onError: (err) => {
+      toast.error(err instanceof Error ? err.message : "Couldn't save");
+    },
+  });
+
+  // Apple Pay master switch (platform-wide kill switch).
+  const applePayMutation = useMutation({
+    mutationFn: (enabled: boolean) => setApplePayEnabled(enabled),
+    onSuccess: (snap) => {
+      queryClient.invalidateQueries({ queryKey: PLATFORM_CONFIG_QUERY_KEY });
+      toast.success(
+        snap.apple_pay_enabled
+          ? "Apple Pay enabled platform-wide"
+          : "Apple Pay disabled platform-wide",
+      );
+    },
+    onError: (err) => {
+      toast.error(err instanceof Error ? err.message : "Couldn't save");
+    },
+  });
+
+  const handleCheckoutIdentityToggle = (enabled: boolean) => {
+    if (enabled) {
+      // Enabling is the store-wide rollout moment — make the admin say so
+      // twice. Disabling (the kill switch) must stay one click.
+      const ok = window.confirm(
+        "Enable phone verification at checkout for EVERY GOWA-transport " +
+          "store whose merchant hasn't opted out? Customers on those " +
+          "stores will need a WhatsApp OTP to place an order.",
+      );
+      if (!ok) return;
+    }
+    checkoutIdentityMutation.mutate(enabled);
+  };
+
   if (platformConfigQuery.isLoading || themesQuery.isLoading) {
     return <DashboardLayoutSkeleton />;
   }
@@ -142,16 +198,11 @@ export default function PlatformSettingsPage() {
   };
 
   return (
-    <DashboardLayout title="Platform settings">
-      <div className="p-6 max-w-3xl space-y-6">
-        <div>
-          <h1 className="text-2xl font-semibold">Platform settings</h1>
-          <p className="text-sm text-muted-foreground">
-            Platform-wide defaults that apply to NEW stores only. Existing
-            stores keep whatever theme they currently have — switching
-            this default does not migrate them.
-          </p>
-        </div>
+    <DashboardLayout
+      title="Platform settings"
+      subtitle="Defaults for new stores only. Changing one never migrates an existing store."
+    >
+      <div className="ak-stack" style={{ maxWidth: 760 }}>
 
         <Card>
           <CardHeader>
@@ -279,6 +330,87 @@ export default function PlatformSettingsPage() {
                 )}
                 disabled={appEmbedsMutation.isPending}
                 onCheckedChange={(v) => appEmbedsMutation.mutate(v)}
+              />
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Checkout-identity rollout gate. This is the platform switch the
+            feature ships behind — everything (OTP gate, save-cart nudge,
+            otp_available) reads it live, so flipping here needs no deploy.
+            Stored flag wins over the API's env default once touched. */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <ShieldCheck className="h-4 w-4" />
+              Checkout — phone verification (WhatsApp OTP)
+            </CardTitle>
+            <CardDescription>
+              Platform rollout gate for phone-first customer identification:
+              customers verify their number with a WhatsApp code before
+              placing an order, and the "save your cart" prompt captures
+              phones mid-shopping for abandoned-cart recovery.{" "}
+              <strong>
+                Turning this on activates the gate for every GOWA-transport
+                store at once
+              </strong>{" "}
+              (merchants can opt out per store under Checkout fields →
+              Customer verification). Meta-only stores are unaffected until
+              their OTP template path ships. Turning it off is the
+              platform-wide kill switch.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="flex items-center justify-between rounded-md border p-3">
+              <div className="text-sm">
+                <p className="font-medium">Phone verification at checkout</p>
+                <p className="text-xs text-muted-foreground">
+                  {platformConfigQuery.data?.checkout_identity_enabled
+                    ? "LIVE — GOWA stores require a WhatsApp OTP at checkout"
+                    : "Off — feature is inert everywhere"}
+                </p>
+              </div>
+              <Switch
+                checked={Boolean(
+                  platformConfigQuery.data?.checkout_identity_enabled,
+                )}
+                disabled={checkoutIdentityMutation.isPending}
+                onCheckedChange={handleCheckoutIdentityToggle}
+              />
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Apple Pay master switch — kill switch across all storefronts.
+            Default ON; per-store Paymob/Kashier toggles are honoured unless
+            this is turned off. Affects storefront checkout surfacing only. */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <CreditCard className="h-4 w-4" />
+              Payments — Apple Pay
+            </CardTitle>
+            <CardDescription>
+              Master switch for Apple Pay across every storefront. When{" "}
+              <strong>off</strong>, Apple Pay is hidden everywhere regardless of
+              each merchant's Paymob / Kashier settings. Leave{" "}
+              <strong>on</strong> for normal operation; use off as a kill switch.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="flex items-center justify-between rounded-md border p-3">
+              <div className="text-sm">
+                <p className="font-medium">Apple Pay</p>
+                <p className="text-xs text-muted-foreground">
+                  {(platformConfigQuery.data?.apple_pay_enabled ?? true)
+                    ? "Available platform-wide"
+                    : "Disabled platform-wide"}
+                </p>
+              </div>
+              <Switch
+                checked={platformConfigQuery.data?.apple_pay_enabled ?? true}
+                disabled={applePayMutation.isPending}
+                onCheckedChange={(v) => applePayMutation.mutate(v)}
               />
             </div>
           </CardContent>

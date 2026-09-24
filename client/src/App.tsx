@@ -13,6 +13,7 @@ import EmailTemplateEditor from "./pages/EmailTemplateEditor";
 import EmailTemplates from "./pages/EmailTemplates";
 import Home from "./pages/Home";
 import Login from "./pages/Login";
+import MerchantDetail from "./pages/MerchantDetail";
 import Merchants from "./pages/Merchants";
 import Orders from "./pages/Orders";
 import LandingPage from "./pages/LandingPage";
@@ -23,28 +24,34 @@ import Reports from "./pages/Reports";
 import Reconciliation from "./pages/Reconciliation";
 import BetaProgram from "./pages/BetaProgram";
 import PlanLimits from "./pages/PlanLimits";
+import Features from "./pages/Features";
+import FeatureDetail from "./pages/FeatureDetail";
+import Flags from "./pages/Flags";
 import PricingPlans from "./pages/PricingPlans";
 import MerchantHubNav from "./pages/MerchantHubNav";
 import Themes from "./pages/Themes";
 import MarketplaceReviews from "./pages/MarketplaceReviews";
 import MarketplaceReview from "./pages/MarketplaceReview";
+import WalletAdmin from "./pages/WalletAdmin";
+import SubscriptionPayments from "./pages/SubscriptionPayments";
 import WhatsappAccessRequests from "./pages/WhatsappAccessRequests";
+import ApiTokens from "./pages/ApiTokens";
+import Partners from "./pages/Partners";
+import AppReview from "./pages/AppReview";
+import AppCatalog from "./pages/AppCatalog";
 import ThemesPage from "./pages/marketplace/ThemesPage";
 import ThemeDetailPage from "./pages/marketplace/ThemeDetailPage";
 import StoreSnapshotsPage from "./pages/marketplace/StoreSnapshotsPage";
 import PlatformSettingsPage from "./pages/platform/SettingsPage";
-
-// Placeholder page for features not yet implemented
-function ComingSoon({ title }: { title: string }) {
-  return (
-    <div className="min-h-screen flex items-center justify-center bg-background">
-      <div className="text-center">
-        <h1 className="text-2xl font-bold mb-2">{title}</h1>
-        <p className="text-muted-foreground">This feature is coming soon</p>
-      </div>
-    </div>
-  );
-}
+import CapabilitiesPage from "./pages/platform/CapabilitiesPage";
+import ComponentShowcase from "./pages/ComponentShowcase";
+import Security from "./pages/Security";
+import { TwoFactorStepUp } from "./components/TwoFactorStepUp";
+import TrustRisk from "./pages/TrustRisk";
+import SupportCases from "./pages/SupportCases";
+import Campaigns from "./pages/Campaigns";
+import Leads from "./pages/Leads";
+import Marketing from "./pages/Marketing";
 
 /**
  * Wraps a page component with auth protection.
@@ -86,6 +93,9 @@ function Router() {
       <Route path="/merchants">
         {() => <ProtectedRoute component={Merchants} />}
       </Route>
+      <Route path="/merchants/:merchantId">
+        {() => <ProtectedRoute component={MerchantDetail} />}
+      </Route>
       <Route path="/orders">
         {() => <ProtectedRoute component={Orders} />}
       </Route>
@@ -119,6 +129,15 @@ function Router() {
       <Route path="/plan-limits">
         {() => <ProtectedRoute component={PlanLimits} />}
       </Route>
+      <Route path="/features">
+        {() => <ProtectedRoute component={Features} />}
+      </Route>
+      <Route path="/features/:key">
+        {() => <ProtectedRoute component={FeatureDetail} />}
+      </Route>
+      <Route path="/flags">
+        {() => <ProtectedRoute component={Flags} />}
+      </Route>
       <Route path="/merchant-hub-nav">
         {() => <ProtectedRoute component={MerchantHubNav} />}
       </Route>
@@ -146,8 +165,41 @@ function Router() {
       <Route path="/marketplace/review">
         {() => <ProtectedRoute component={MarketplaceReview} />}
       </Route>
+      <Route path="/trust-risk">
+        {() => <ProtectedRoute component={TrustRisk} />}
+      </Route>
+      <Route path="/support-cases">
+        {() => <ProtectedRoute component={SupportCases} />}
+      </Route>
+      <Route path="/campaigns">
+        {() => <ProtectedRoute component={Campaigns} />}
+      </Route>
+      <Route path="/leads">
+        {() => <ProtectedRoute component={Leads} />}
+      </Route>
+      <Route path="/marketing">
+        {() => <ProtectedRoute component={Marketing} />}
+      </Route>
       <Route path="/whatsapp-access">
         {() => <ProtectedRoute component={WhatsappAccessRequests} />}
+      </Route>
+      <Route path="/api-tokens">
+        {() => <ProtectedRoute component={ApiTokens} />}
+      </Route>
+      <Route path="/apps/partners">
+        {() => <ProtectedRoute component={Partners} />}
+      </Route>
+      <Route path="/apps/review">
+        {() => <ProtectedRoute component={AppReview} />}
+      </Route>
+      <Route path="/apps/catalog">
+        {() => <ProtectedRoute component={AppCatalog} />}
+      </Route>
+      <Route path="/wallets">
+        {() => <ProtectedRoute component={WalletAdmin} />}
+      </Route>
+      <Route path="/subscription-payments">
+        {() => <ProtectedRoute component={SubscriptionPayments} />}
       </Route>
       <Route path="/marketplace/themes">
         {() => <ProtectedRoute component={ThemesPage} />}
@@ -171,6 +223,19 @@ function Router() {
       </Route>
       <Route path="/platform/settings">
         {() => <ProtectedRoute component={PlatformSettingsPage} />}
+      </Route>
+      {/* Capability registry — the control plane for what may extend NUMU
+          (ADR-0 / ADR-6). Sits next to /platform/settings under Platform. */}
+      <Route path="/platform/capabilities">
+        {() => <ProtectedRoute component={CapabilitiesPage} />}
+      </Route>
+      {/* Live reference for the NUMU design system — what every component
+          actually looks like inside this shell. */}
+      <Route path="/security">
+        {() => <ProtectedRoute component={Security} />}
+      </Route>
+      <Route path="/design-system">
+        {() => <ProtectedRoute component={ComponentShowcase} />}
       </Route>
       <Route path="/404" component={NotFound} />
       <Route component={NotFound} />
@@ -198,6 +263,7 @@ function App() {
         <TooltipProvider>
           <Toaster />
           <Router />
+          <TwoFactorStepUp />
         </TooltipProvider>
       </ThemeProvider>
     </ErrorBoundary>

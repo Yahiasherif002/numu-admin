@@ -22,6 +22,7 @@ import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/_core/hooks/useAuth";
 import DashboardLayout from "@/components/DashboardLayout";
+import { Button as NumuButton } from "@/ds";
 import { DashboardLayoutSkeleton } from "@/components/DashboardLayoutSkeleton";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -65,7 +66,7 @@ import { toast } from "sonner";
 
 interface ReviewCardProps {
   version: PendingThemeVersion;
-  onAct: (decision: ReviewDecision, notes?: string) => void;
+  onAct: (decision: ReviewDecision, notes?: string, override?: boolean) => void;
   pending: boolean;
 }
 
@@ -74,6 +75,10 @@ function ReviewCard({ version, onAct, pending }: ReviewCardProps) {
     null,
   );
   const [notes, setNotes] = useState("");
+  // The API refuses to publish a version whose certification lint did not
+  // pass unless the reviewer overrides it on purpose.
+  const lintPassed = version.lint_status === "passed";
+  const [override, setOverride] = useState(false);
 
   const submittedAt = new Date(version.submitted_at);
 
@@ -172,11 +177,33 @@ function ReviewCard({ version, onAct, pending }: ReviewCardProps) {
           )}
         </div>
 
+        <div className="text-xs space-y-1.5">
+          <p>
+            <span className="font-semibold">Certification:</span>{" "}
+            <Badge variant={lintPassed ? "secondary" : "destructive"}>
+              {version.lint_status ?? "not run"}
+            </Badge>
+            {version.certification_tier && (
+              <span className="text-muted-foreground"> · tier {version.certification_tier}</span>
+            )}
+          </p>
+          {!lintPassed && (
+            <label className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                checked={override}
+                onChange={(e) => setOverride(e.target.checked)}
+              />
+              Override certification (recorded in the review notes)
+            </label>
+          )}
+        </div>
+
         <div className="flex flex-wrap gap-2 pt-1">
           <Button
             size="sm"
-            onClick={() => onAct("approve")}
-            disabled={pending}
+            onClick={() => onAct("approve", undefined, !lintPassed && override)}
+            disabled={pending || (!lintPassed && !override)}
             className="bg-green-600 hover:bg-green-700"
           >
             {pending ? (
@@ -275,11 +302,13 @@ export default function MarketplaceReview() {
       versionId,
       decision,
       notes,
+      override,
     }: {
       versionId: string;
       decision: ReviewDecision;
       notes?: string;
-    }) => reviewVersion(versionId, { decision, notes }),
+      override?: boolean;
+    }) => reviewVersion(versionId, { decision, notes, override_certification: override || undefined }),
     onMutate: ({ versionId }) => setActingId(versionId),
     onSettled: () => setActingId(null),
     onSuccess: (data) => {
@@ -318,33 +347,21 @@ export default function MarketplaceReview() {
   const pending = pendingQuery.data?.pending ?? [];
 
   return (
-    <DashboardLayout title="Marketplace review">
-      <div className="space-y-6">
-        <div className="flex items-start justify-between gap-4">
-          <div>
-            <h1 className="text-2xl font-semibold tracking-tight">
-              Marketplace review
-            </h1>
-            <p className="text-sm text-muted-foreground mt-1 max-w-xl">
-              Approve or reject theme versions before they reach the public
-              catalog. Approval requires a fresh (≤5 min) MFA confirmation.
-            </p>
-          </div>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => void pendingQuery.refetch()}
-            disabled={pendingQuery.isFetching}
-          >
-            <RefreshCw
-              className={`h-3.5 w-3.5 me-1.5${
-                pendingQuery.isFetching ? " animate-spin" : ""
-              }`}
-            />
-            Refresh
-          </Button>
-        </div>
-
+    <DashboardLayout
+      title="Marketplace review"
+      subtitle="Theme versions waiting to reach the public catalogue. Approval needs an MFA confirmation less than 5 minutes old."
+      actions={
+        <NumuButton
+          variant="subtle"
+          icon="refresh"
+          loading={pendingQuery.isFetching}
+          onClick={() => void pendingQuery.refetch()}
+        >
+          Refresh
+        </NumuButton>
+      }
+    >
+      <div className="ak-stack">
         {pendingQuery.isError && (
           <Card className="border-destructive/40 bg-destructive/5">
             <CardContent className="pt-6 flex items-start gap-3">
@@ -387,11 +404,12 @@ export default function MarketplaceReview() {
               key={v.version_id}
               version={v}
               pending={reviewMutation.isPending && actingId === v.version_id}
-              onAct={(decision, notes) =>
+              onAct={(decision, notes, override) =>
                 reviewMutation.mutate({
                   versionId: v.version_id,
                   decision,
                   notes,
+                  override,
                 })
               }
             />

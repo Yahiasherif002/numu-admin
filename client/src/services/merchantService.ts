@@ -14,7 +14,13 @@ export interface Merchant {
   logoUrl: string | null;
   plan: string;
   lifecycleState: string | null;
+  /** Days left before the trial expires and the storefront locks; null for
+   *  anyone not on a trial. */
+  trialDaysRemaining: number | null;
+  trialEndsAt: string | null;
   isInternal: boolean;
+  /** Founder cohort year, or null when not a founder merchant. */
+  founderCohort: string | null;
   status: "active" | "pending_approval" | "suspended" | "inactive";
   totalRevenue: number | null;
   totalOrders: number | null;
@@ -34,7 +40,13 @@ interface ApiStoreItem {
   owner_email: string | null;
   plan: string | null;
   lifecycle_state: string | null;
+  /** Days until the trial expires and the storefront locks. Null unless the
+   *  tenant is actually on a trial. */
+  trial_days_remaining: number | null;
+  trial_ends_at: string | null;
   is_internal: boolean;
+  /** Founder-merchant cohort year ("2025"), or null. Lives on the tenant. */
+  founder_cohort: string | null;
   logo_url: string | null;
   total_revenue: number;
   total_orders: number;
@@ -60,7 +72,10 @@ function mapStore(store: ApiStoreItem, index: number, pageOffset: number): Merch
     logoUrl: store.logo_url,
     plan: store.plan || "free",
     lifecycleState: store.lifecycle_state,
+    trialDaysRemaining: store.trial_days_remaining ?? null,
+    trialEndsAt: store.trial_ends_at ?? null,
     isInternal: store.is_internal ?? false,
+    founderCohort: store.founder_cohort ?? null,
     status: store.status as Merchant["status"],
     totalRevenue: store.total_revenue ?? 0,
     totalOrders: store.total_orders ?? 0,
@@ -162,6 +177,26 @@ export async function toggleMerchantInternal(
   });
 }
 
+/**
+ * Grant or revoke founder-merchant status.
+ *
+ * `cohort` is the merchant's JOIN YEAR ("2025"), never a rank — a rank tells
+ * merchant #42 that 41 came before them, which publishes how many merchants
+ * are on the platform. Pass null to remove the badge.
+ *
+ * Set on the TENANT, so a merchant with several stores gets the badge on all
+ * of them; the API returns the tenant it changed.
+ */
+export async function setFounderCohort(
+  merchantId: string,
+  cohort: string | null,
+): Promise<{ store_id: string; tenant_id: string; founder_cohort: string | null }> {
+  return apiClient(`/admin/stores/${merchantId}/founder`, {
+    method: "PATCH",
+    body: JSON.stringify({ founder_cohort: cohort }),
+  });
+}
+
 export async function setInstapayOcrProvider(
   merchantId: string,
   provider: InstapayOcrProvider,
@@ -173,4 +208,84 @@ export async function setInstapayOcrProvider(
       body: JSON.stringify({ provider }),
     },
   );
+}
+
+// ─── Merchant detail (GET /admin/stores/{id}/detail) ────────────────────────
+
+export interface MerchantDetail {
+  store: {
+    id: string;
+    name: string;
+    slug: string;
+    subdomain: string | null;
+    custom_domain: string | null;
+    status: string;
+    logo_url: string | null;
+    country: string | null;
+    default_currency: string | null;
+    default_language: string | null;
+    storefront_url: string | null;
+    created_at: string | null;
+  };
+  tenant: {
+    id: string;
+    name: string;
+    plan: string;
+    lifecycle_state: string | null;
+    expires_at: string | null;
+    trial_started_at: string | null;
+    trial_converted_at: string | null;
+    billing_cycle: string | null;
+    next_renewal_at: string | null;
+    payment_method_last4: string | null;
+    feature_flags: Record<string, boolean>;
+    is_demo: boolean;
+    demo_name: string | null;
+    demo_email: string | null;
+    demo_whatsapp: string | null;
+    demo_started_at: string | null;
+  } | null;
+  owner: {
+    id: string;
+    name: string;
+    email: string;
+    phone: string | null;
+    status: string | null;
+    plan_intent: string | null;
+    /** Signup trial stamped at registration. Never cleared on conversion. */
+    trial_ends_at: string | null;
+    /** Whether the merchant is on trial *now*, per the tenant lifecycle. */
+    is_on_trial: boolean;
+    last_login_at: string | null;
+    created_at: string | null;
+  } | null;
+  wallet: {
+    balance_cents: number;
+    pending_balance_cents: number;
+    currency: string;
+    status: string;
+    commission_bps_override: number | null;
+  } | null;
+  metrics: {
+    orders_count: number;
+    paid_revenue_cents: number;
+    last_order_at: string | null;
+    products_count: number;
+    customers_count: number;
+  };
+  recent_orders: {
+    id: string;
+    order_number: string;
+    total_cents: number;
+    currency: string;
+    status: string | null;
+    payment_status: string | null;
+    created_at: string | null;
+  }[];
+}
+
+export async function getMerchantDetail(
+  storeId: string,
+): Promise<MerchantDetail> {
+  return apiClient<MerchantDetail>(`/admin/stores/${storeId}/detail`);
 }

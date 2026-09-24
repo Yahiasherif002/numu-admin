@@ -33,6 +33,13 @@ export interface PlatformConfigSnapshot {
   default_marketplace_theme: DefaultThemeSummary | null;
   /** Phase 5.2 — whether the merchant editor shows the "App embeds" tab. */
   app_embeds_tab_enabled: boolean;
+  /** Phone-first checkout identity rollout gate (WhatsApp OTP at checkout
+   * + save-cart nudge). Effective value: stored admin flag when set, else
+   * the API's CHECKOUT_IDENTITY_ENABLED env default. */
+  checkout_identity_enabled: boolean;
+  /** Apple Pay master switch — when false, Apple Pay is hidden platform-wide
+   *  (per-store toggles are ignored at checkout). Default true. */
+  apple_pay_enabled: boolean;
 }
 
 export function getPlatformConfig(): Promise<PlatformConfigSnapshot> {
@@ -51,6 +58,41 @@ export function setAppEmbedsTabEnabled(
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ app_embeds_tab_enabled: enabled }),
+  });
+}
+
+/**
+ * Flip the phone-first checkout-identity rollout gate platform-wide.
+ *
+ * ON = every GOWA-transport store whose merchant hasn't opted out
+ * (require_verification defaults true in their checkout-fields settings)
+ * starts requiring a WhatsApp OTP at checkout, and the save-cart nudge
+ * goes live. Meta-only stores self-degrade (otp_available=false) and are
+ * unaffected. OFF = the whole feature is inert everywhere — this is also
+ * the kill switch. Once set here, this value wins over the API's
+ * CHECKOUT_IDENTITY_ENABLED env default.
+ */
+export function setCheckoutIdentityEnabled(
+  enabled: boolean,
+): Promise<PlatformConfigSnapshot> {
+  return apiClient<PlatformConfigSnapshot>("/admin/platform-config", {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ checkout_identity_enabled: enabled }),
+  });
+}
+
+/**
+ * Apple Pay master switch. When off, Apple Pay is hidden across every
+ * storefront regardless of per-store settings (kill switch). Default on.
+ */
+export function setApplePayEnabled(
+  enabled: boolean,
+): Promise<PlatformConfigSnapshot> {
+  return apiClient<PlatformConfigSnapshot>("/admin/platform-config", {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ apple_pay_enabled: enabled }),
   });
 }
 

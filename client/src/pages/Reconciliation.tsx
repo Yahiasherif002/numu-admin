@@ -10,6 +10,7 @@
  */
 
 import DashboardLayout from "@/components/DashboardLayout";
+import { Badge as NumuBadge, MetricCard, StatusBadge } from "@/ds";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -39,23 +40,23 @@ import {
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   adminListReconciliationRuns,
+  adminListReconciliationTransactions,
   adminListRunMismatches,
+  adminReconcileMarkPaid,
   adminTriggerReconciliation,
   type AdminReconciliationRun,
+  type AdminTransactionOrderRow,
   type MismatchType,
 } from "@/services/adminApi";
 import {
   Activity,
   AlertTriangle,
-  CheckCircle2,
   ChevronDown,
   ChevronRight,
   Loader2,
   Play,
   RefreshCw,
   Scale,
-  TrendingDown,
-  XCircle,
 } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
@@ -90,50 +91,38 @@ function formatDateTime(iso: string): string {
 // ── Status badge ──────────────────────────────────────────────────────────────
 
 function RunStatusBadge({ run }: { run: AdminReconciliationRun }) {
-  if (run.status === "failed") {
-    return (
-      <Badge className="bg-red-100 text-red-700 gap-1 w-fit">
-        <XCircle className="h-3 w-3" /> Failed
-      </Badge>
-    );
-  }
-  if (run.status === "running") {
-    return (
-      <Badge className="bg-blue-100 text-blue-700 gap-1 w-fit">
-        <Activity className="h-3 w-3" /> Running
-      </Badge>
-    );
-  }
-  if (run.mismatches_found === 0) {
-    return (
-      <Badge className="bg-emerald-100 text-emerald-700 gap-1 w-fit">
-        <CheckCircle2 className="h-3 w-3" /> Clean
-      </Badge>
-    );
-  }
+  if (run.status === "failed") return <StatusBadge status="failed" />;
+  if (run.status === "running") return <StatusBadge status="retrying" label="Running" />;
+  if (run.mismatches_found === 0) return <StatusBadge status="healthy" label="Clean" />;
   return (
-    <Badge className="bg-amber-100 text-amber-700 gap-1 w-fit">
-      <AlertTriangle className="h-3 w-3" />
-      {run.mismatches_found} mismatch{run.mismatches_found !== 1 ? "es" : ""}
-    </Badge>
+    <StatusBadge
+      status="degraded"
+      label={`${run.mismatches_found} mismatch${run.mismatches_found !== 1 ? "es" : ""}`}
+    />
   );
 }
 
 // ── Mismatch type label ───────────────────────────────────────────────────────
 
-const MISMATCH_LABELS: Record<MismatchType, { label: string; color: string }> = {
-  amount_mismatch: { label: "Amount Mismatch", color: "bg-amber-100 text-amber-700" },
-  missing_transaction: { label: "Missing Transaction", color: "bg-red-100 text-red-700" },
-  missing_order: { label: "Missing Order", color: "bg-orange-100 text-orange-700" },
-  duplicate_transaction: { label: "Duplicate", color: "bg-purple-100 text-purple-700" },
+/* Tone grades how bad the mismatch is, not what kind it is: a missing
+   transaction is money the gateway never saw, an amount mismatch is money
+   that does not add up, and a duplicate is a reconciliation artefact. */
+const MISMATCH_LABELS: Record<
+  MismatchType,
+  { label: string; tone: "warning" | "danger" | "neutral" }
+> = {
+  amount_mismatch: { label: "Amount", tone: "warning" },
+  missing_transaction: { label: "No transaction", tone: "danger" },
+  missing_order: { label: "No order", tone: "danger" },
+  duplicate_transaction: { label: "Duplicate", tone: "neutral" },
 };
 
 function MismatchTypeBadge({ type }: { type: string }) {
   const cfg = MISMATCH_LABELS[type as MismatchType];
   return (
-    <Badge className={`text-xs w-fit ${cfg?.color ?? "bg-gray-100 text-gray-700"}`}>
+    <NumuBadge tone={cfg?.tone ?? "neutral"} square>
       {cfg?.label ?? type}
-    </Badge>
+    </NumuBadge>
   );
 }
 
@@ -239,13 +228,7 @@ function MismatchPanel({
                     : "—"}
                 </TableCell>
                 <TableCell>
-                  {m.resolved ? (
-                    <Badge className="bg-emerald-100 text-emerald-700 text-xs">
-                      Resolved
-                    </Badge>
-                  ) : (
-                    <Badge className="bg-amber-100 text-amber-700 text-xs">Open</Badge>
-                  )}
+                  <StatusBadge status={m.resolved ? "resolved" : "open"} />
                 </TableCell>
                 <TableCell className="text-muted-foreground max-w-[120px]">
                   {m.resolved_by ? (
@@ -305,7 +288,9 @@ function RunRow({
           {formatDate(run.period_end)}
         </TableCell>
         <TableCell>
-          <Badge className="bg-blue-50 text-blue-700 text-xs capitalize">{run.gateway}</Badge>
+          <NumuBadge tone="info" square>
+            {run.gateway}
+          </NumuBadge>
         </TableCell>
         <TableCell>
           <RunStatusBadge run={run} />
@@ -366,6 +351,192 @@ function RunRow({
 
 // ── Main page ─────────────────────────────────────────────────────────────────
 
+// ── Live transactions (gateway payment ↔ order state) ─────────────────────────
+
+const GATEWAYS = ["kashier", "paymob", "moyasar", "fawaterak", "instapay"];
+
+function formatMoney(cents: number, currency: string): string {
+  return `${currency} ${(cents / 100).toLocaleString("en-US", { minimumFractionDigits: 2 })}`;
+}
+
+function TransactionsPanel() {
+  const queryClient = useQueryClient();
+  const [gateway, setGateway] = useState("all");
+  const [mismatchOnly, setMismatchOnly] = useState(true);
+  const [page, setPage] = useState(1);
+  const [confirming, setConfirming] = useState<AdminTransactionOrderRow | null>(null);
+
+  const { data, isLoading } = useQuery({
+    queryKey: ["admin-reconciliation-transactions", gateway, mismatchOnly, page],
+    queryFn: () =>
+      adminListReconciliationTransactions({
+        gateway: gateway !== "all" ? gateway : undefined,
+        mismatch_only: mismatchOnly,
+        page,
+        limit: 50,
+      }),
+  });
+
+  const markPaid = useMutation({
+    mutationFn: (txId: string) => adminReconcileMarkPaid(txId),
+    onSuccess: (row) => {
+      toast.success(`${row.order_number} marked paid`);
+      setConfirming(null);
+      queryClient.invalidateQueries({ queryKey: ["admin-reconciliation-transactions"] });
+    },
+    onError: (err: Error) => toast.error(err.message || "Failed to mark paid"),
+  });
+
+  const rows = data?.items ?? [];
+
+  return (
+    <div className="dashboard-card mb-6">
+      <div className="flex flex-col md:flex-row gap-3 items-start md:items-center justify-between mb-4">
+        <div>
+          <h2 className="text-base font-semibold">Gateway transactions</h2>
+          <p className="text-xs text-muted-foreground">
+            Live, last 30 days. A paid transaction on an unpaid order means the webhook did not land.
+          </p>
+        </div>
+        <div className="flex flex-wrap gap-3">
+          <Select value={gateway} onValueChange={(v) => { setGateway(v); setPage(1); }}>
+            <SelectTrigger className="w-36">
+              <SelectValue placeholder="Gateway" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All gateways</SelectItem>
+              {GATEWAYS.map((g) => (
+                <SelectItem key={g} value={g}>{g}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Select
+            value={mismatchOnly ? "mismatch" : "all"}
+            onValueChange={(v) => { setMismatchOnly(v === "mismatch"); setPage(1); }}
+          >
+            <SelectTrigger className="w-40">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="mismatch">Mismatches only</SelectItem>
+              <SelectItem value="all">All transactions</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+      </div>
+
+      {isLoading ? (
+        <div className="flex justify-center py-8">
+          <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+        </div>
+      ) : rows.length === 0 ? (
+        <p className="text-sm text-muted-foreground py-6 text-center">
+          {mismatchOnly ? "No mismatches. Every paid transaction has a paid order." : "No transactions."}
+        </p>
+      ) : (
+        <div className="overflow-x-auto">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Date</TableHead>
+                <TableHead>Store</TableHead>
+                <TableHead>Gateway</TableHead>
+                <TableHead>Transaction</TableHead>
+                <TableHead className="text-right">Amount</TableHead>
+                <TableHead>Order</TableHead>
+                <TableHead>Order state</TableHead>
+                <TableHead>Issue</TableHead>
+                <TableHead />
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {rows.map((r) => (
+                <TableRow key={r.transaction_id}>
+                  <TableCell className="whitespace-nowrap text-xs">{formatDateTime(r.created_at)}</TableCell>
+                  <TableCell className="text-xs">{r.store_name ?? r.store_id.slice(0, 8)}</TableCell>
+                  <TableCell className="text-xs">{r.gateway}</TableCell>
+                  <TableCell className="font-mono text-xs">
+                    {r.gateway_transaction_id ?? "—"}
+                    <span className="block text-muted-foreground">{r.tx_status}</span>
+                  </TableCell>
+                  <TableCell className="text-right text-xs whitespace-nowrap">
+                    {formatMoney(r.amount_cents, r.currency)}
+                  </TableCell>
+                  <TableCell className="font-mono text-xs">{r.order_number ?? "—"}</TableCell>
+                  <TableCell className="text-xs">
+                    {r.order_status ? `${r.order_status} / ${r.payment_status}` : "—"}
+                  </TableCell>
+                  <TableCell>
+                    {r.mismatch === "paid_not_recorded" && (
+                      <NumuBadge tone="danger" square>Paid, not recorded</NumuBadge>
+                    )}
+                    {r.mismatch === "order_missing" && (
+                      <NumuBadge tone="warning" square>No order</NumuBadge>
+                    )}
+                  </TableCell>
+                  <TableCell>
+                    {r.mismatch === "paid_not_recorded" && (
+                      <Button size="sm" variant="outline" onClick={() => setConfirming(r)}>
+                        Mark paid
+                      </Button>
+                    )}
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </div>
+      )}
+
+      {data && data.total_pages > 1 && (
+        <div className="flex items-center justify-end gap-2 mt-4 text-xs">
+          <Button size="sm" variant="outline" disabled={page <= 1} onClick={() => setPage(page - 1)}>
+            Previous
+          </Button>
+          <span>
+            Page {data.page} of {data.total_pages}
+          </span>
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={page >= data.total_pages}
+            onClick={() => setPage(page + 1)}
+          >
+            Next
+          </Button>
+        </div>
+      )}
+
+      <Dialog open={confirming !== null} onOpenChange={(open) => !open && setConfirming(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Mark {confirming?.order_number} paid?</DialogTitle>
+            <DialogDescription>
+              Applies {confirming?.gateway} transaction {confirming?.gateway_transaction_id} (
+              {confirming && formatMoney(confirming.amount_cents, confirming.currency)}) to the order,
+              as if the webhook had landed. The merchant gets the new-order notifications and the
+              shipment is booked if auto-shipping is on. Logged to the audit trail.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setConfirming(null)}>
+              Cancel
+            </Button>
+            <Button
+              onClick={() => confirming && markPaid.mutate(confirming.transaction_id)}
+              disabled={markPaid.isPending}
+              className="gap-2"
+            >
+              {markPaid.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
+              Mark paid
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
+
 export default function Reconciliation() {
   const queryClient = useQueryClient();
   const [statusFilter, setStatusFilter] = useState<string>("all");
@@ -413,69 +584,53 @@ export default function Reconciliation() {
   );
   const totalMismatches = runs.reduce((acc, r) => acc + r.mismatches_found, 0);
 
-  const kpis = [
-    {
-      label: "Total Runs",
-      value: totalRuns,
-      sub: `${cleanRuns} clean`,
-      icon: Activity,
-      color: "bg-blue-50",
-      iconColor: "text-blue-600",
-    },
-    {
-      label: "Clean Runs",
-      value: cleanRuns,
-      sub: "Zero mismatches",
-      icon: CheckCircle2,
-      color: "bg-emerald-50",
-      iconColor: "text-emerald-600",
-    },
-    {
-      label: "Total Mismatches",
-      value: totalMismatches,
-      sub: `across ${runsWithMismatches} run${runsWithMismatches !== 1 ? "s" : ""}`,
-      icon: AlertTriangle,
-      color: runsWithMismatches > 0 ? "bg-amber-50" : "bg-gray-50",
-      iconColor: runsWithMismatches > 0 ? "text-amber-600" : "text-muted-foreground",
-    },
-    {
-      label: "Failed Runs",
-      value: failedRuns,
-      sub: failedRuns > 0 ? "Needs attention" : "All passed",
-      icon: XCircle,
-      color: failedRuns > 0 ? "bg-red-50" : "bg-gray-50",
-      iconColor: failedRuns > 0 ? "text-red-600" : "text-muted-foreground",
-    },
-    {
-      label: "Total Variance",
-      value: formatCents(totalVariance),
-      sub: "Abs. sum all runs",
-      icon: TrendingDown,
-      color: totalVariance > 0 ? "bg-red-50" : "bg-emerald-50",
-      iconColor: totalVariance > 0 ? "text-red-600" : "text-emerald-600",
-    },
-  ];
-
   return (
     <DashboardLayout
-      title="Payment Reconciliation"
-      subtitle="Daily comparison of PAID orders vs payment gateway transactions"
+      title="Payment reconciliation"
+      subtitle="Paid orders against gateway transactions, run daily."
     >
-      {/* KPI Cards */}
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-6">
-        {kpis.map((kpi) => (
-          <div key={kpi.label} className="dashboard-card flex items-center gap-3">
-            <div className={`w-10 h-10 rounded-lg ${kpi.color} flex items-center justify-center shrink-0`}>
-              <kpi.icon className={`w-5 h-5 ${kpi.iconColor}`} />
-            </div>
-            <div className="min-w-0">
-              <p className="text-xs text-muted-foreground truncate">{kpi.label}</p>
-              <p className="text-xl font-bold truncate">{kpi.value}</p>
-              <p className="text-[11px] text-muted-foreground truncate">{kpi.sub}</p>
-            </div>
-          </div>
-        ))}
+      <div className="ak-metrics">
+        <MetricCard
+          label="Runs"
+          value={totalRuns}
+          note={`${cleanRuns} clean`}
+          icon="activity"
+          flat
+        />
+        <MetricCard
+          label="Clean runs"
+          value={cleanRuns}
+          note="zero mismatches"
+          icon="check"
+          flat
+        />
+        <MetricCard
+          label="Mismatches"
+          value={totalMismatches}
+          note={`across ${runsWithMismatches} run${runsWithMismatches !== 1 ? "s" : ""}`}
+          icon="alertTriangle"
+          alert={totalMismatches > 0}
+          flat
+        />
+        <MetricCard
+          label="Failed runs"
+          value={failedRuns}
+          note={failedRuns > 0 ? "needs an operator" : "all passed"}
+          icon="x"
+          alert={failedRuns > 0}
+          flat
+        />
+        <MetricCard
+          label="Total variance"
+          value={formatCents(totalVariance)}
+          note="absolute, all runs"
+          icon="trendingDown"
+          alert={totalVariance > 0}
+          flat
+        />
       </div>
+
+      <TransactionsPanel />
 
       {/* Controls */}
       <div className="dashboard-card mb-6">
