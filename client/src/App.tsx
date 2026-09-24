@@ -38,7 +38,9 @@ import WhatsappAccessRequests from "./pages/WhatsappAccessRequests";
 import ApiTokens from "./pages/ApiTokens";
 import Partners from "./pages/Partners";
 import AppReview from "./pages/AppReview";
+import PartnerNotices from "./pages/PartnerNotices";
 import AppCatalog from "./pages/AppCatalog";
+import AppBilling from "./pages/AppBilling";
 import ThemesPage from "./pages/marketplace/ThemesPage";
 import ThemeDetailPage from "./pages/marketplace/ThemeDetailPage";
 import StoreSnapshotsPage from "./pages/marketplace/StoreSnapshotsPage";
@@ -49,6 +51,8 @@ import Security from "./pages/Security";
 import { TwoFactorStepUp } from "./components/TwoFactorStepUp";
 import TrustRisk from "./pages/TrustRisk";
 import SupportCases from "./pages/SupportCases";
+import PartnerSupport from "./pages/PartnerSupport";
+import AppReviews from "./pages/AppReviews";
 import Campaigns from "./pages/Campaigns";
 import Leads from "./pages/Leads";
 import Marketing from "./pages/Marketing";
@@ -171,6 +175,12 @@ function Router() {
       <Route path="/support-cases">
         {() => <ProtectedRoute component={SupportCases} />}
       </Route>
+      <Route path="/partner-support">
+        {() => <ProtectedRoute component={PartnerSupport} />}
+      </Route>
+      <Route path="/app-reviews">
+        {() => <ProtectedRoute component={AppReviews} />}
+      </Route>
       <Route path="/campaigns">
         {() => <ProtectedRoute component={Campaigns} />}
       </Route>
@@ -192,8 +202,14 @@ function Router() {
       <Route path="/apps/review">
         {() => <ProtectedRoute component={AppReview} />}
       </Route>
+      <Route path="/apps/notices">
+        {() => <ProtectedRoute component={PartnerNotices} />}
+      </Route>
       <Route path="/apps/catalog">
         {() => <ProtectedRoute component={AppCatalog} />}
+      </Route>
+      <Route path="/apps/billing">
+        {() => <ProtectedRoute component={AppBilling} />}
       </Route>
       <Route path="/wallets">
         {() => <ProtectedRoute component={WalletAdmin} />}
