@@ -12,8 +12,15 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { ADMIN_NAV, navIdForPath, navTrailForPath } from "./adminNav";
-import { formatCompact, formatMoney, formatMoneyShort, formatNumber, parseMoney } from "./format";
+import { ADMIN_NAV, navForScope, navIdForPath, navTrailForPath } from "./adminNav";
+import {
+  formatCompact,
+  formatMoney,
+  formatMoneyShort,
+  formatNumber,
+  humanizeAction,
+  parseMoney,
+} from "./format";
 
 describe("navIdForPath", () => {
   it("lights Overview only on the root", () => {
@@ -66,6 +73,31 @@ describe("nav model", () => {
   });
 });
 
+describe("navForScope", () => {
+  const ids = (scope: string | null) => navForScope(scope).flatMap((s) => s.items.map((i) => i.id));
+
+  it("gives a full admin everything", () => {
+    expect(navForScope(null)).toBe(ADMIN_NAV);
+    expect(navForScope("all")).toBe(ADMIN_NAV);
+  });
+
+  it("hides what a limited scope cannot open", () => {
+    expect(ids("support")).toContain("orders");
+    expect(ids("support")).not.toContain("wallets");
+    expect(ids("support")).not.toContain("settings");
+    expect(ids("finance")).toContain("wallets");
+    expect(ids("ops")).toContain("merchants");
+    expect(ids("finance")).toContain("merchants");
+    expect(ids("support")).not.toContain("merchants");
+    for (const scope of ["support", "finance", "ops"]) expect(ids(scope)).toContain("audit");
+  });
+
+  it("shows an unknown scope nothing but drops empty sections", () => {
+    expect(ids("bogus")).toEqual([]);
+    expect(navForScope("support").every((s) => s.items.length > 0)).toBe(true);
+  });
+});
+
 describe("money", () => {
   it("reads minor units", () => {
     expect(formatMoney(124_000)).toContain("1,240.00");
@@ -102,5 +134,19 @@ describe("formatCompact", () => {
     expect(formatCompact(12_000)).toBe("12k");
     expect(formatCompact(2_400_000)).toBe("2.4M");
     expect(formatCompact(0)).toBe("0");
+  });
+});
+
+describe("humanizeAction", () => {
+  it("reads order status transitions", () => {
+    expect(humanizeAction("status:shipped->delivered")).toBe("Order Shipped → Delivered");
+    expect(humanizeAction("status:PAYMENT_FAILED->cancelled")).toBe(
+      "Order Payment failed → Cancelled",
+    );
+  });
+
+  it("sentence-cases any other code", () => {
+    expect(humanizeAction("app_listing_flags")).toBe("App listing flags");
+    expect(humanizeAction("store-suspended")).toBe("Store suspended");
   });
 });

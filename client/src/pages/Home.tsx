@@ -8,8 +8,8 @@
  *
  * Every number comes from `/admin/dashboard/overview`, which computes them in
  * one pass so no two tiles can disagree. Open support cases renders as a dash
- * rather than a zero: this platform has no support-case table, and a queue
- * that reads zero looks cleared rather than absent.
+ * when the API sends none: a queue that reads zero looks cleared rather than
+ * absent.
  */
 
 import DashboardLayout from "@/components/DashboardLayout";
@@ -33,8 +33,11 @@ import {
   formatCompact,
   formatDateTime,
   formatMoney,
+  formatMoneyShort,
   formatNumber,
   formatRelative,
+  humanizeAction,
+  sentenceCase,
 } from "@/lib/format";
 import {
   getAdminOverview,
@@ -68,8 +71,14 @@ function delta(t: Trend | null | undefined): string | undefined {
   return `${sign}${t.delta}${unit}`;
 }
 
+const HEALTH_LABEL: Record<string, string> = {
+  payment_failure_rate: "Payment failures",
+  webhook_backlog: "Webhook backlog",
+  risk_queue: "Risk review queue",
+};
+
 /**
- * `+201012345678` → `+2010 †† 45 ††`.
+ * `+201012345678` → `+2010•••34••`.
  *
  * The design system masks customer contact details in operational lists: an
  * operator needs to recognise a number they were already given, not to be
@@ -79,7 +88,7 @@ function maskPhone(phone: string | null): string {
   if (!phone) return "—";
   const digits = phone.replace(/[^\d+]/g, "");
   if (digits.length < 9) return phone;
-  return `${digits.slice(0, 5)} †† ${digits.slice(7, 9)} ††`;
+  return `${digits.slice(0, 5)}•••${digits.slice(7, 9)}••`;
 }
 
 export default function Home() {
@@ -112,7 +121,9 @@ export default function Home() {
       render: (o) => (
         <div>
           <div>{o.customer_name || "Guest"}</div>
-          <div className="ntb__sub numu-phone">{maskPhone(o.customer_phone)}</div>
+          <div className="ntb__sub numu-phone" dir="ltr">
+            {maskPhone(o.customer_phone)}
+          </div>
         </div>
       ),
     },
@@ -156,9 +167,7 @@ export default function Home() {
           <EmptyState
             kind="error"
             title="The overview failed to load"
-            body={
-              error instanceof Error ? error.message : "The request did not complete."
-            }
+            body={error instanceof Error ? error.message : "The request did not complete."}
             action={
               <Button size="sm" icon="refresh" onClick={() => refetch()}>
                 Try again
@@ -179,12 +188,7 @@ export default function Home() {
           : "Loading platform counts."
       }
       actions={
-        <Button
-          variant="subtle"
-          icon="refresh"
-          loading={isLoading}
-          onClick={() => refetch()}
-        >
+        <Button variant="subtle" icon="refresh" loading={isLoading} onClick={() => refetch()}>
           Refresh
         </Button>
       }
@@ -194,29 +198,30 @@ export default function Home() {
       {data?.health
         .filter((h) => h.severity !== "ok")
         .map((h) => (
-        <Banner
-          key={h.id}
-          tone={h.severity === "danger" ? "danger" : "warning"}
-          title={h.title}
-          actions={
-            <Button
-              size="sm"
-              variant="subtle"
-              icon="activity"
-              onClick={() => navigate("/orders")}
-            >
-              Investigate
-            </Button>
-          }
-        >
-          {h.detail}
-        </Banner>
-      ))}
+          <Banner
+            key={h.id}
+            tone={h.severity === "danger" ? "danger" : "warning"}
+            title={h.title}
+            actions={
+              <Button
+                size="sm"
+                variant="subtle"
+                icon="activity"
+                onClick={() => navigate("/orders")}
+              >
+                Investigate
+              </Button>
+            }
+          >
+            {h.detail}
+          </Banner>
+        ))}
 
       {/* Strip one — how the platform is doing. */}
       <div className="ak-metrics">
         <MetricCard
           label="Active merchants"
+          title="Merchants that are switched on, not internal and not demo. Spark = signups per day, last 7 days."
           value={formatNumber(m?.active_merchants.value)}
           delta={delta(m?.active_merchants)}
           note={m?.active_merchants.note ?? undefined}
@@ -234,6 +239,7 @@ export default function Home() {
         />
         <MetricCard
           label="Active stores"
+          title="Stores with status active whose merchant is live (switched on, not internal, not demo). Delta = stores created this week."
           value={formatNumber(m?.active_stores.value)}
           delta={delta(m?.active_stores)}
           note={m?.active_stores.note ?? undefined}
@@ -243,6 +249,7 @@ export default function Home() {
         />
         <MetricCard
           label="Orders today"
+          title="Orders created since midnight UTC at live merchants, any status. Delta compares the same hours yesterday."
           value={formatNumber(m?.orders_today.value)}
           delta={delta(m?.orders_today)}
           note={m?.orders_today.note ?? undefined}
@@ -250,14 +257,15 @@ export default function Home() {
           loading={isLoading}
           sparkline={
             m?.orders_today.spark.length ? (
-              <Sparkline data={m.orders_today.spark} area label="Order value per day, last 14 days" />
+              <Sparkline data={m.orders_today.spark} area label="Orders per day, last 14 days" />
             ) : undefined
           }
           onClick={() => navigate("/orders")}
         />
         <MetricCard
           label="Order value today"
-          value={formatMoney(m?.order_value_today.value ?? 0)}
+          title="Total of orders created since midnight UTC with payment status paid, live merchants only. Delta compares the same hours yesterday."
+          value={formatMoneyShort(m?.order_value_today.value)}
           delta={delta(m?.order_value_today)}
           note={m?.order_value_today.note ?? undefined}
           icon="banknote"
@@ -266,14 +274,15 @@ export default function Home() {
             m?.order_value_today.spark.length ? (
               <Sparkline
                 data={m.order_value_today.spark}
-                label="Paid order value per hour today"
+                label="Paid order value per day, last 14 days"
               />
             ) : undefined
           }
         />
         <MetricCard
           label="Trial → paid · 30d"
-          value={m ? m.trial_to_paid_30d.value : 0}
+          title="Of trials started in the last 30 days, the share that has converted to a paid plan. Internal and demo merchants excluded."
+          value={formatNumber(m?.trial_to_paid_30d.value)}
           unit="%"
           note={m?.trial_to_paid_30d.note ?? undefined}
           icon="trendingUp"
@@ -285,6 +294,7 @@ export default function Home() {
       <div className="ak-metrics">
         <MetricCard
           label="Failed payments · 24h"
+          title="Orders created in the last 24 hours with payment status failed, live merchants only. Delta compares the 24 hours before."
           value={formatNumber(m?.failed_payments_24h.value)}
           delta={delta(m?.failed_payments_24h)}
           deltaDirection="up"
@@ -296,6 +306,7 @@ export default function Home() {
         />
         <MetricCard
           label="Stores requiring review"
+          title="Stores waiting for approval (pending approval) at live merchants."
           value={formatNumber(m?.stores_requiring_review.value)}
           note={m?.stores_requiring_review.note ?? undefined}
           icon="shieldAlert"
@@ -305,6 +316,7 @@ export default function Home() {
         />
         <MetricCard
           label="High-risk COD orders"
+          title="Open cash-on-delivery orders whose latest risk score is high or critical and that nobody has decided on yet."
           value={formatNumber(m?.high_risk_cod_orders.value)}
           note={m?.high_risk_cod_orders.note ?? undefined}
           icon="shield"
@@ -314,13 +326,17 @@ export default function Home() {
         />
         <MetricCard
           label="Open support cases"
-          value="—"
-          note="no case system on this platform"
+          title="Support cases that are open or pending the merchant. Cases from internal and demo merchants excluded."
+          value={m?.open_support_cases ? formatNumber(m.open_support_cases.value) : "—"}
+          note={m?.open_support_cases?.note ?? undefined}
           icon="inbox"
+          alert={Boolean(m?.open_support_cases?.value)}
           loading={isLoading}
+          onClick={() => navigate("/support-cases")}
         />
         <MetricCard
           label="Failed jobs & webhooks"
+          title="Webhook deliveries to live merchants' integrations that failed or exhausted their retries. Delta = failures in the last 24 hours."
           value={formatNumber(m?.failed_jobs_webhooks.value)}
           delta={delta(m?.failed_jobs_webhooks)}
           deltaDirection="up"
@@ -347,14 +363,16 @@ export default function Home() {
           <div className="ak-metrics ak-metrics--4">
             <MetricCard
               label="Recognised revenue"
-              value={formatMoney(e?.recognised_30d ?? 0)}
+              title="Subscription invoices paid plus wallet top-ups received, last 30 days."
+              value={formatMoneyShort(e?.recognised_30d)}
               note="subscriptions + top-ups"
               icon="banknote"
               loading={isLoading}
             />
             <MetricCard
               label="MRR"
-              value={formatMoney(e?.mrr_cents ?? 0)}
+              title="Monthly price of every active paid plan; annual plans counted at a twelfth of the annual price."
+              value={formatMoneyShort(e?.mrr_cents)}
               note={`${formatNumber(e?.mrr_subscribers)} paid plans`}
               icon="trendingUp"
               flat
@@ -362,7 +380,8 @@ export default function Home() {
             />
             <MetricCard
               label="Subscriptions collected"
-              value={formatMoney(e?.subscriptions_collected_30d ?? 0)}
+              title="Subscription invoices paid in the last 30 days, card and InstaPay."
+              value={formatMoneyShort(e?.subscriptions_collected_30d)}
               note="paid invoices"
               icon="clipboard"
               flat
@@ -370,7 +389,8 @@ export default function Home() {
             />
             <MetricCard
               label="Wallet top-ups"
-              value={formatMoney(e?.wallet_topups_collected_30d ?? 0)}
+              title="Wallet top-ups received in the last 30 days."
+              value={formatMoneyShort(e?.wallet_topups_collected_30d)}
               note="cash received"
               icon="creditCard"
               flat
@@ -451,10 +471,7 @@ export default function Home() {
               gridLines={2}
               color="var(--viz-2)"
               isHighlighted={(d) =>
-                Boolean(
-                  data?.webhook_failures_per_hour.find((b) => b.label === d.label)
-                    ?.highlight,
-                )
+                Boolean(data?.webhook_failures_per_hour.find((b) => b.label === d.label)?.highlight)
               }
               label={`Failed webhook deliveries per hour. ${formatNumber(
                 m?.failed_jobs_webhooks.value,
@@ -512,7 +529,7 @@ export default function Home() {
               size="sm"
               variant="ghost"
               iconEnd="arrowRight"
-              onClick={() => navigate("/settings")}
+              onClick={() => navigate("/audit")}
             >
               Audit log
             </Button>
@@ -579,7 +596,7 @@ export default function Home() {
                               : "Normal"
                         }
                       />
-                      <span className="numu-label">{h.id}</span>
+                      <span className="numu-label">{HEALTH_LABEL[h.id] ?? sentenceCase(h.id)}</span>
                     </div>
                     <p className="ak-feed__title">{h.title}</p>
                     <p className="ak-feed__meta">{h.detail}</p>
@@ -614,13 +631,20 @@ function ActivityRow({ entry }: { entry: ActivityEntry }) {
       <span className={`ak-feed__dot ak-feed__dot--${tone}`} />
       <div className="ak-feed__body">
         <div className="ak-cell-line">
-          <span className="ak-feed__title">{entry.action}</span>
+          <span className="ak-feed__title">{humanizeAction(entry.action)}</span>
           {entry.actor_type === "system" ? (
             <Badge tone="neutral" icon="zap" square>
               system
             </Badge>
           ) : (
-            <span className="numu-email ak-feed__actor">{entry.actor}</span>
+            <>
+              {entry.actor_type === "staff" ? (
+                <Badge tone="info" icon="user" square>
+                  staff
+                </Badge>
+              ) : null}
+              <span className="numu-email ak-feed__actor">{entry.actor}</span>
+            </>
           )}
         </div>
         <p className="ak-feed__meta">

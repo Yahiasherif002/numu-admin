@@ -30,20 +30,27 @@ import {
   Pagination,
   Select,
   StatusBadge,
+  Tabs,
   type DataTableColumn,
 } from "@/ds";
 import { formatDate, formatMoneyShort, formatNumber } from "@/lib/format";
+import { runLimited } from "@/lib/utils";
+import { csvCell } from "@/pages/Reports";
 import {
   getMerchantStats,
   getMerchants,
+  getMerchantsAttention,
   impersonateMerchant,
   setFounderCohort,
   setInstapayOcrProvider,
   toggleMerchantInternal,
   updateMerchantStatus,
+  updateTenant,
+  type AttentionRow,
   type InstapayOcrProvider,
   type Merchant,
 } from "@/services/merchantService";
+import { FEATURES_QUERY_KEY, listFeatures } from "@/services/entitlementsAdminApi";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { toast } from "sonner";
@@ -66,10 +73,27 @@ const VIEWS = [
 
 const PAGE_SIZE = 20;
 
+type Tab = "merchants" | "internal" | "attention";
+type Bulk = "suspend" | "activate" | "plan";
+
+const REASON_BADGE: Record<
+  AttentionRow["reasons"][number]["kind"],
+  { label: string; tone: "danger" | "warning" | "info" }
+> = {
+  return_spike: { label: "Return spike", tone: "danger" },
+  stuck_orders: { label: "Stuck orders", tone: "warning" },
+  wallet: { label: "Wallet", tone: "warning" },
+  trial_ending: { label: "Trial ending", tone: "info" },
+};
+
 export default function Merchants() {
   const [, navigate] = useLocation();
   const queryClient = useQueryClient();
 
+  const [tab, setTab] = useState<Tab>("merchants");
+  const [selected, setSelected] = useState<string[]>([]);
+  const [bulk, setBulk] = useState<Bulk | null>(null);
+  const [bulkPlan, setBulkPlan] = useState("");
   const [search, setSearch] = useState("");
   const [view, setView] = useState("all");
   const [page, setPage] = useState(1);
@@ -87,16 +111,31 @@ export default function Merchants() {
     offset: (page - 1) * PAGE_SIZE,
     status: view !== "all" ? view : undefined,
     search: search || undefined,
+    internal: tab === "internal" ? ("only" as const) : undefined,
   };
 
   const { data, isLoading } = useQuery({
     queryKey: ["merchants", "list", queryParams],
     queryFn: () => getMerchants(queryParams),
+    enabled: tab !== "attention",
   });
   const { data: stats } = useQuery({
     queryKey: ["merchants", "stats"],
     queryFn: getMerchantStats,
   });
+  const attention = useQuery({
+    queryKey: ["merchants", "attention"],
+    queryFn: getMerchantsAttention,
+  });
+  // The entitlement catalog's plans are the ones the API accepts.
+  const catalog = useQuery({
+    queryKey: FEATURES_QUERY_KEY,
+    queryFn: listFeatures,
+    enabled: bulk === "plan",
+  });
+  const planOptions = (catalog.data?.plans ?? [])
+    .filter((p) => !p.startsWith("addon:"))
+    .map((p) => ({ value: p, label: p }));
 
   const invalidate = () => {
     queryClient.invalidateQueries({ queryKey: ["merchants"] });
@@ -107,10 +146,9 @@ export default function Merchants() {
     mutationFn: ({ id, status }: { id: string; status: string }) =>
       updateMerchantStatus(id, status),
     onSuccess: (_d, v) => {
-      toast.success(
-        v.status === "suspended" ? "Store suspended" : "Store status updated",
-        { description: `${v.id} · recorded in the audit log` },
-      );
+      toast.success(v.status === "suspended" ? "Store suspended" : "Store status updated", {
+        description: `${v.id} · recorded in the audit log`,
+      });
       setSuspending(null);
       invalidate();
     },
@@ -133,8 +171,8 @@ export default function Merchants() {
     onSuccess: (_d, v) => {
       toast.success(
         v.isInternal
-          ? "Marked internal — excluded from every platform aggregate"
-          : "Marked real — included in platform aggregates",
+          ? "Marked internal — moved to the Internal tab and excluded from platform aggregates"
+          : "Marked real — moved to Merchants and included in platform aggregates",
       );
       invalidate();
     },
@@ -189,7 +227,11 @@ export default function Merchants() {
         <div>
           <div className="ntb__primary ak-cell-line">
             <span>{m.name}</span>
-            {m.isInternal ? <Badge tone="warning" icon="flag" square>Internal</Badge> : null}
+            {m.isInternal ? (
+              <Badge tone="warning" icon="flag" square>
+                Internal
+              </Badge>
+            ) : null}
             {m.founderCohort ? (
               <Badge
                 tone="warning"
@@ -233,15 +275,15 @@ export default function Merchants() {
       header: "Plan",
       render: (m) => (
         <div className="ak-cell-line">
-          <Badge tone="neutral" square>{m.plan}</Badge>
+          <Badge tone="neutral" square>
+            {m.plan}
+          </Badge>
           {/* A trial without its remaining days answers "are they paying?"
               and not "when do I need to call them?", which is the question
               this screen exists for. Under a week reads as a warning. */}
           {m.trialDaysRemaining !== null ? (
             <Badge tone={m.trialDaysRemaining <= 7 ? "warning" : "info"} square>
-              {m.trialDaysRemaining === 0
-                ? "ends today"
-                : `${m.trialDaysRemaining}d left`}
+              {m.trialDaysRemaining === 0 ? "ends today" : `${m.trialDaysRemaining}d left`}
             </Badge>
           ) : null}
         </div>
@@ -275,11 +317,11 @@ export default function Merchants() {
         <div className="ak-rowactions" onClick={(e) => e.stopPropagation()}>
           <IconButton
             icon="flag"
-            label={m.isInternal ? "Mark as a real merchant" : "Mark as internal"}
+            label={tab === "internal" ? "Mark as a real merchant" : "Mark as internal"}
             size="sm"
             disabled={internalMutation.isPending}
             onClick={() =>
-              internalMutation.mutate({ id: m.merchantId, isInternal: !m.isInternal })
+              internalMutation.mutate({ id: m.merchantId, isInternal: tab !== "internal" })
             }
           />
           <IconButton
@@ -316,9 +358,7 @@ export default function Merchants() {
               icon="playCircle"
               label="Reinstate this store"
               size="sm"
-              onClick={() =>
-                statusMutation.mutate({ id: m.merchantId, status: "active" })
-              }
+              onClick={() => statusMutation.mutate({ id: m.merchantId, status: "active" })}
             />
           ) : (
             <IconButton
@@ -334,110 +374,339 @@ export default function Merchants() {
   ];
 
   const merchants = data?.merchants ?? [];
+  // Selection is per page: rows scrolled away by paging are not acted on.
+  const selectedRows = merchants.filter((m) => selected.includes(m.merchantId));
+
+  // ponytail: one request per merchant from the browser; add a bulk endpoint
+  // once staff routinely act on more than ~100 at a time.
+  const bulkMutation = useMutation({
+    mutationFn: async (action: Bulk) => {
+      const calls: (() => Promise<unknown>)[] =
+        action === "plan"
+          ? // Plan lives on the tenant; a merchant with two stores is one call.
+            Array.from(new Set(selectedRows.map((m) => m.tenantId))).map(
+              (t) => () =>
+                t ? updateTenant(t, { plan: bulkPlan }) : Promise.reject(new Error("No tenant")),
+            )
+          : selectedRows.map(
+              (m) => () =>
+                updateMerchantStatus(m.merchantId, action === "suspend" ? "suspended" : "active"),
+            );
+      return runLimited(calls, 4, (call) => call());
+    },
+    onSuccess: (results) => {
+      const failed = results.filter((r) => r.status === "rejected").length;
+      const done = results.length - failed;
+      if (failed) {
+        toast.error(`${done} done, ${failed} failed`, {
+          description: (results.find((r) => r.status === "rejected") as PromiseRejectedResult)
+            .reason?.message,
+        });
+      } else {
+        toast.success(`${done} updated`, { description: "Recorded in the audit log" });
+      }
+      setBulk(null);
+      setSelected([]);
+      invalidate();
+    },
+  });
+
+  const attentionColumns: DataTableColumn<AttentionRow>[] = [
+    {
+      key: "name",
+      header: "Merchant",
+      render: (r) => <span className="ntb__primary">{r.name ?? r.tenant_id}</span>,
+    },
+    {
+      key: "reasons",
+      header: "Why",
+      render: (r) => (
+        <div className="ak-stack">
+          {r.reasons.map((x) => (
+            <div key={x.kind} className="ak-cell-line">
+              <Badge tone={REASON_BADGE[x.kind].tone} square>
+                {REASON_BADGE[x.kind].label}
+              </Badge>
+              <span className="ntb__sub">{x.detail}</span>
+            </div>
+          ))}
+        </div>
+      ),
+    },
+  ];
 
   return (
     <DashboardLayout
       title="Merchants"
-      subtitle="Every store on the platform, including internal ones."
+      subtitle="Every merchant store on the platform. Internal and demo stores are under Internal."
+      tabs={
+        <Tabs
+          tabs={[
+            { id: "merchants", label: "Merchants" },
+            { id: "internal", label: "Internal" },
+            { id: "attention", label: "Needs a call", count: attention.data?.length },
+          ]}
+          active={tab}
+          onChange={(id) => {
+            setTab(id as Tab);
+            setPage(1);
+            setSelected([]);
+          }}
+        />
+      }
     >
-      <div className="ak-metrics ak-metrics--4">
-        <MetricCard
-          label="Total"
-          value={formatNumber(stats?.total)}
-          icon="building"
-          flat
-          onClick={() => setView("all")}
-        />
-        <MetricCard
-          label="Active"
-          value={formatNumber(stats?.active)}
-          icon="check"
-          flat
-          onClick={() => setView("active")}
-        />
-        <MetricCard
-          label="Awaiting approval"
-          value={formatNumber(stats?.pending_approval)}
-          icon="clock"
-          flat
-          alert={Boolean(stats?.pending_approval)}
-          onClick={() => setView("pending_approval")}
-        />
-        <MetricCard
-          label="Suspended"
-          value={formatNumber(stats?.suspended)}
-          icon="slash"
-          flat
-          onClick={() => setView("suspended")}
-        />
-      </div>
+      {tab === "attention" ? (
+        <Card
+          title="Needs a call"
+          subtitle="Live merchants with a return spike, stuck orders, a low wallet or a trial ending within 3 days"
+          flush
+        >
+          <DataTable
+            columns={attentionColumns}
+            rows={attention.data ?? []}
+            rowKey={(r) => r.tenant_id}
+            loading={attention.isLoading}
+            caption="Merchants that need a call"
+            onRowClick={(r) => r.store_id && navigate(`/merchants/${r.store_id}`)}
+            isFlagged={(r) => r.reasons.length > 1}
+            empty={
+              <EmptyState
+                kind={attention.isError ? "error" : "empty"}
+                title={attention.isError ? "Could not load the list" : "Nobody needs a call"}
+                body={
+                  attention.isError
+                    ? (attention.error as Error).message
+                    : "No live merchant matches any of the rules right now."
+                }
+              />
+            }
+          />
+        </Card>
+      ) : (
+        <>
+          <div className="ak-metrics ak-metrics--4">
+            <MetricCard
+              label="Total"
+              value={formatNumber(stats?.total)}
+              icon="building"
+              flat
+              onClick={() => setView("all")}
+            />
+            <MetricCard
+              label="Active"
+              value={formatNumber(stats?.active)}
+              icon="check"
+              flat
+              onClick={() => setView("active")}
+            />
+            <MetricCard
+              label="Awaiting approval"
+              value={formatNumber(stats?.pending_approval)}
+              icon="clock"
+              flat
+              alert={Boolean(stats?.pending_approval)}
+              onClick={() => setView("pending_approval")}
+            />
+            <MetricCard
+              label="Suspended"
+              value={formatNumber(stats?.suspended)}
+              icon="slash"
+              flat
+              onClick={() => setView("suspended")}
+            />
+          </div>
 
-      <Card flush>
-        <FilterBar
-          savedViews={VIEWS}
-          activeView={view}
-          onViewChange={(id) => {
-            setView(id);
-            setPage(1);
-          }}
-          search={search}
-          onSearchChange={(v) => {
-            setSearch(v);
-            setPage(1);
-          }}
-          searchPlaceholder="Name, email or subdomain"
-          actions={
-            <Button
-              variant="subtle"
-              size="sm"
-              icon="download"
-              onClick={() => exportCsv(merchants)}
-            >
-              Export CSV
-            </Button>
-          }
-        />
-        <DataTable
-          columns={columns}
-          rows={merchants}
-          rowKey={(m) => m.merchantId}
-          loading={isLoading}
-          caption="Merchants on the platform"
-          onRowClick={(m) => navigate(`/merchants/${m.merchantId}`)}
-          isFlagged={(m) => m.status === "suspended"}
-          empty={
-            <EmptyState
-              kind={search || view !== "all" ? "noResults" : "empty"}
-              title={search || view !== "all" ? "Nothing matches" : "No merchants yet"}
-              body={
-                search || view !== "all"
-                  ? "Widen the search or switch to another saved view."
-                  : "A merchant appears here as soon as their first store is created."
+          <Card flush>
+            <FilterBar
+              savedViews={VIEWS}
+              activeView={view}
+              onViewChange={(id) => {
+                setView(id);
+                setPage(1);
+              }}
+              search={search}
+              onSearchChange={(v) => {
+                setSearch(v);
+                setPage(1);
+              }}
+              searchPlaceholder="Name, email or subdomain"
+              actions={
+                <Button
+                  variant="subtle"
+                  size="sm"
+                  icon="download"
+                  onClick={() => exportCsv(merchants)}
+                >
+                  Export CSV
+                </Button>
               }
-              action={
-                search || view !== "all" ? (
+              selectedCount={selectedRows.length}
+              onClearSelection={() => setSelected([])}
+              bulkActions={
+                <>
+                  <Button
+                    size="sm"
+                    variant="danger-outline"
+                    icon="slash"
+                    onClick={() => setBulk("suspend")}
+                  >
+                    Suspend
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    icon="playCircle"
+                    onClick={() => setBulk("activate")}
+                  >
+                    Activate
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => {
+                      setBulkPlan("");
+                      setBulk("plan");
+                    }}
+                  >
+                    Change plan
+                  </Button>
                   <Button
                     size="sm"
                     variant="subtle"
-                    onClick={() => {
-                      setSearch("");
-                      setView("all");
-                    }}
+                    icon="download"
+                    onClick={() => exportCsv(selectedRows)}
                   >
-                    Clear filters
+                    Export CSV
                   </Button>
-                ) : undefined
+                </>
               }
             />
+            <DataTable
+              columns={columns}
+              rows={merchants}
+              rowKey={(m) => m.merchantId}
+              selectable={tab === "merchants"}
+              selected={selected}
+              onSelect={(key) =>
+                setSelected((s) =>
+                  s.includes(String(key))
+                    ? s.filter((k) => k !== String(key))
+                    : [...s, String(key)],
+                )
+              }
+              onSelectAll={(checked) =>
+                setSelected(checked ? merchants.map((m) => m.merchantId) : [])
+              }
+              loading={isLoading}
+              caption={tab === "internal" ? "Internal merchants" : "Merchants on the platform"}
+              onRowClick={(m) => navigate(`/merchants/${m.merchantId}`)}
+              isFlagged={(m) => m.status === "suspended"}
+              empty={
+                <EmptyState
+                  kind={search || view !== "all" ? "noResults" : "empty"}
+                  title={
+                    search || view !== "all"
+                      ? "Nothing matches"
+                      : tab === "internal"
+                        ? "No internal merchants"
+                        : "No merchants yet"
+                  }
+                  body={
+                    search || view !== "all"
+                      ? "Widen the search or switch to another saved view."
+                      : tab === "internal"
+                        ? "Stores marked internal and demo stores appear here."
+                        : "A merchant appears here as soon as their first store is created."
+                  }
+                  action={
+                    search || view !== "all" ? (
+                      <Button
+                        size="sm"
+                        variant="subtle"
+                        onClick={() => {
+                          setSearch("");
+                          setView("all");
+                        }}
+                      >
+                        Clear filters
+                      </Button>
+                    ) : undefined
+                  }
+                />
+              }
+            />
+            <Pagination
+              page={page}
+              pageSize={PAGE_SIZE}
+              total={data?.total ?? 0}
+              onPageChange={setPage}
+            />
+          </Card>
+        </>
+      )}
+
+      {bulk ? (
+        <ConfirmDialog
+          open
+          tone={bulk === "suspend" ? "danger" : "warning"}
+          title={
+            bulk === "suspend"
+              ? `Suspend ${selectedRows.length} stores?`
+              : bulk === "activate"
+                ? `Activate ${selectedRows.length} stores?`
+                : `Change the plan of ${selectedRows.length} merchants?`
           }
-        />
-        <Pagination
-          page={page}
-          pageSize={PAGE_SIZE}
-          total={data?.total ?? 0}
-          onPageChange={setPage}
-        />
-      </Card>
+          entity={[
+            {
+              label: "Stores",
+              value: selectedRows
+                .slice(0, 5)
+                .map((m) => m.name)
+                .join(", ")
+                .concat(selectedRows.length > 5 ? ` and ${selectedRows.length - 5} more` : ""),
+            },
+          ]}
+          consequences={
+            bulk === "suspend"
+              ? [
+                  "Each storefront stops serving shoppers immediately.",
+                  "Each merchant sees a suspension notice in the Merchant Hub.",
+                  "One request per store; failures are reported and the rest still apply.",
+                ]
+              : bulk === "activate"
+                ? [
+                    "Each storefront serves shoppers again.",
+                    "One request per store; failures are reported and the rest still apply.",
+                  ]
+                : [
+                    "Limits and features follow the new plan immediately.",
+                    "No charge or refund is made — billing is not touched.",
+                  ]
+          }
+          confirmPhrase={bulk === "suspend" ? String(selectedRows.length) : undefined}
+          confirmLabel={bulkMutation.isPending ? "Working…" : "Apply"}
+          onClose={() => setBulk(null)}
+          onConfirm={() => {
+            if (bulkMutation.isPending) return;
+            if (bulk === "plan" && !bulkPlan) {
+              toast.error("Pick a plan");
+              return;
+            }
+            bulkMutation.mutate(bulk);
+          }}
+        >
+          {bulk === "plan" ? (
+            <FormField label="New plan">
+              <Select
+                aria-label="New plan"
+                value={bulkPlan}
+                onChange={(e) => setBulkPlan(e.target.value)}
+                options={[{ value: "", label: "Choose a plan" }, ...planOptions]}
+              />
+            </FormField>
+          ) : null}
+        </ConfirmDialog>
+      ) : null}
 
       <ConfirmDialog
         open={Boolean(suspending)}
@@ -458,8 +727,7 @@ export default function Merchants() {
         confirmLabel="Suspend store"
         onClose={() => setSuspending(null)}
         onConfirm={() =>
-          suspending &&
-          statusMutation.mutate({ id: suspending.merchantId, status: "suspended" })
+          suspending && statusMutation.mutate({ id: suspending.merchantId, status: "suspended" })
         }
       />
 
@@ -479,9 +747,7 @@ export default function Merchants() {
         ]}
         confirmLabel="Start session"
         onClose={() => setImpersonating(null)}
-        onConfirm={() =>
-          impersonating && impersonateMutation.mutate(impersonating.merchantId)
-        }
+        onConfirm={() => impersonating && impersonateMutation.mutate(impersonating.merchantId)}
       />
 
       <Dialog
@@ -506,8 +772,7 @@ export default function Merchants() {
               loading={ocrMutation.isPending}
               disabled={requiresPrivacyAck && !ocrPrivacyAck}
               onClick={() =>
-                ocrTarget &&
-                ocrMutation.mutate({ id: ocrTarget.merchantId, provider: ocrProvider })
+                ocrTarget && ocrMutation.mutate({ id: ocrTarget.merchantId, provider: ocrProvider })
               }
             >
               Save provider
@@ -626,7 +891,18 @@ function exportCsv(rows: Merchant[]) {
   }
   // trial_ends_at rides along so a call list can be sorted by it in a sheet,
   // which is what the export is for.
-  const header = ["store_id", "name", "email", "domain", "status", "plan", "trial_ends_at", "revenue_piasters", "orders", "created_at"];
+  const header = [
+    "store_id",
+    "name",
+    "email",
+    "domain",
+    "status",
+    "plan",
+    "trial_ends_at",
+    "revenue_piasters",
+    "orders",
+    "created_at",
+  ];
   const body = rows.map((m) =>
     [
       m.merchantId,
@@ -640,7 +916,7 @@ function exportCsv(rows: Merchant[]) {
       String(m.totalOrders ?? 0),
       m.createdAt.toISOString(),
     ]
-      .map((cell) => `"${String(cell).replace(/"/g, '""')}"`)
+      .map(csvCell)
       .join(","),
   );
   const blob = new Blob([[header.join(","), ...body].join("\n")], {
