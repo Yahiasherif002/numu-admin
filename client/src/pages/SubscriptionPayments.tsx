@@ -620,21 +620,21 @@ const LIFECYCLE_NUMBER_FIELDS: {
   {
     key: "dunning_max_retries",
     label: "Dunning: max retries",
-    hint: "Failed renewal attempts before the store goes read-only.",
+    hint: "The store is never suspended before this many renewal attempts.",
     min: 1,
     max: 10,
   },
   {
     key: "dunning_retry_backoff_hours",
     label: "Dunning: retry backoff (hours)",
-    hint: "Gap between renewal retry attempts.",
+    hint: "Gap between renewal attempts. A saved card is retried; a merchant with no card gets a reminder.",
     min: 1,
     max: 168,
   },
   {
     key: "dunning_window_hours",
-    label: "Dunning: minimum window (hours)",
-    hint: "Read-only can't trigger before this much time since subscription start.",
+    label: "Dunning: grace window (hours)",
+    hint: "Time to pay after a renewal could not be collected, before the store is suspended. The hub counts it down.",
     min: 0,
     max: 720,
   },
@@ -825,9 +825,12 @@ function LifecycleTab() {
           </CardTitle>
           <CardDescription>
             What happens when a renewal can't be collected (no saved card,
-            or the card declined): retries with backoff, then the store goes
-            read-only. A dunning email pointing at card/InstaPay fires on
-            every failed try.
+            or the card declined): the merchant gets a grace window, shown
+            as a countdown in the hub, and the store is suspended when it
+            ends. The window is the longer of the grace window below and
+            (retries − 1) × backoff. The merchant gets an email and a hub
+            notification when the window starts, at every attempt after
+            that, and when the store is suspended.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">

@@ -396,6 +396,27 @@ export function pauseBilling(tenantId: string, paused: boolean, reason: string):
   });
 }
 
+/**
+ * A plan payment the merchant made outside the hub. Starts or extends the paid
+ * period; `paid_until` (YYYY-MM-DD) left out means one cycle on from the end of
+ * the current period, or from now when there is none.
+ */
+export function recordPayment(
+  tenantId: string,
+  body: {
+    plan: string;
+    billing_cycle: string;
+    amount_cents: number;
+    paid_until?: string;
+    reason: string;
+  },
+): Promise<unknown> {
+  return apiClient(`/admin/merchants/${tenantId}/record-payment`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
 export function refundInvoice(
   tenantId: string,
   invoiceId: string,
