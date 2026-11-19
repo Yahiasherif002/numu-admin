@@ -870,8 +870,11 @@ function BillingPanel({
     d.tenant?.billing_cycle === "annual" ? "annual" : "monthly",
   );
   const [payAmount, setPayAmount] = useState("");
+  const [payRef, setPayRef] = useState("");
   const [paidUntil, setPaidUntil] = useState("");
   const payCents = parseMoney(payAmount);
+  // Same shape the API accepts: the reference as printed on the receipt.
+  const payRefOk = /^[A-Za-z0-9._/-]{3,32}$/.test(payRef.trim());
 
   const run = useMutation({
     mutationFn: (a: BillingAction): Promise<unknown> => {
@@ -881,6 +884,7 @@ function BillingPanel({
           plan: payPlan,
           billing_cycle: payCycle,
           amount_cents: payCents!,
+          transfer_reference: payRef.trim(),
           paid_until: paidUntil || undefined,
           reason: reason.trim(),
         });
@@ -912,6 +916,7 @@ function BillingPanel({
       if (a.kind === "credit") setAmount("");
       if (a.kind === "record") {
         setPayAmount("");
+        setPayRef("");
         setPaidUntil("");
       }
       void queryClient.invalidateQueries({ queryKey: ["merchant-insights", tenantId] });
@@ -942,8 +947,9 @@ function BillingPanel({
         title: `Record ${formatMoney(payCents, "EGP")} for ${payPlan} (${payCycle})?`,
         consequences: [
           paidUntil
-            ? `The plan is active and paid until ${paidUntil}.`
-            : "The plan is active for one cycle, counted from the end of the current paid period, or from now if there is none.",
+            ? `The plan is active and paid through ${paidUntil}.`
+            : "The plan is active for one cycle, counted from its renewal date if that is still ahead or the merchant is past due, otherwise from now.",
+          `Transfer ${payRef.trim()} can be recorded once for this merchant.`,
           "A paid invoice is written and the payment shows on the merchant's Billing page.",
           "When the paid period ends the merchant is asked to renew from the hub, then the store is suspended once the grace window is over (3 days by default).",
           "No money moves: record only what you have received.",
@@ -965,6 +971,7 @@ function BillingPanel({
             consequences: [
               "No renewal charge, retry, past-due state or dunning email while paused.",
               "A trial does not expire and a read-only store is not deleted while paused.",
+              "A past-due store is not suspended while paused: its countdown stops, and resuming starts a new grace window.",
               "A store that is already read-only stays locked. Pre-expiry reminder emails still go out.",
             ],
             label: "Pause billing",
@@ -1087,8 +1094,16 @@ function BillingPanel({
                 onChange={(e) => setPayAmount(e.target.value)}
               />
               <Input
-                aria-label="Paid until (optional)"
-                title="Paid until (optional)"
+                aria-label="Transfer reference"
+                title="The reference printed on the receipt"
+                mono
+                placeholder="Transfer ref"
+                value={payRef}
+                onChange={(e) => setPayRef(e.target.value)}
+              />
+              <Input
+                aria-label="Paid through (optional)"
+                title="Last day the payment covers (optional)"
                 type="date"
                 value={paidUntil}
                 onChange={(e) => setPaidUntil(e.target.value)}
@@ -1096,7 +1111,7 @@ function BillingPanel({
               <Button
                 size="sm"
                 variant="outline"
-                disabled={payCents == null || payCents < 0}
+                disabled={payCents == null || payCents < 0 || !payRefOk}
                 onClick={() => setAction({ kind: "record" })}
               >
                 Record payment

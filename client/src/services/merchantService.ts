@@ -398,8 +398,9 @@ export function pauseBilling(tenantId: string, paused: boolean, reason: string):
 
 /**
  * A plan payment the merchant made outside the hub. Starts or extends the paid
- * period; `paid_until` (YYYY-MM-DD) left out means one cycle on from the end of
- * the current period, or from now when there is none.
+ * period. `transfer_reference` is the reference printed on the receipt: one
+ * transfer is recorded once. `paid_until` (YYYY-MM-DD) is the last day covered;
+ * left out, the period is one cycle on from the renewal date, or from now.
  */
 export function recordPayment(
   tenantId: string,
@@ -407,6 +408,7 @@ export function recordPayment(
     plan: string;
     billing_cycle: string;
     amount_cents: number;
+    transfer_reference: string;
     paid_until?: string;
     reason: string;
   },
