@@ -27,7 +27,7 @@ export interface SubscriptionProofItem {
   tenant_name: string | null;
   intent_id: string;
   plan: string;
-  billing_cycle: "monthly" | "annual";
+  billing_cycle: "monthly" | "quarterly" | "annual";
   purpose: "new_subscription" | "renewal";
   amount_cents: number;
   reference: string;
@@ -126,4 +126,43 @@ export function updateBillingLifecycleSettings(
       body: JSON.stringify(patch),
     },
   );
+}
+// ─── Price offer (Black Friday, Ramadan, ...) ────────────────────────────
+
+/** plan -> cycle -> piasters */
+export type OfferPrices = Record<string, Record<string, number>>;
+
+export interface BillingOffer {
+  name_en: string;
+  name_ar: string;
+  /** ISO datetimes. */
+  starts_at: string;
+  ends_at: string;
+  prices: OfferPrices;
+}
+
+export interface BillingOfferState {
+  offer: BillingOffer | null;
+  /** Inside its window right now. */
+  running: boolean;
+  /** What each plan and cycle costs without an offer. */
+  list_prices: OfferPrices;
+}
+
+const OFFER_URL = "/admin/subscription-payments/offer";
+
+export function getBillingOffer(): Promise<BillingOfferState> {
+  return apiClient<BillingOfferState>(OFFER_URL);
+}
+
+export function saveBillingOffer(offer: BillingOffer): Promise<BillingOfferState> {
+  return apiClient<BillingOfferState>(OFFER_URL, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(offer),
+  });
+}
+
+export function endBillingOffer(): Promise<BillingOfferState> {
+  return apiClient<BillingOfferState>(OFFER_URL, { method: "DELETE" });
 }

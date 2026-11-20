@@ -866,9 +866,7 @@ function BillingPanel({
   const creditCents = parseMoney(amount);
   const currency = d.wallet?.currency ?? "EGP";
   const [payPlan, setPayPlan] = useState(d.tenant?.plan === "pro" ? "pro" : "starter");
-  const [payCycle, setPayCycle] = useState(
-    d.tenant?.billing_cycle === "annual" ? "annual" : "monthly",
-  );
+  const [payCycle, setPayCycle] = useState(d.tenant?.billing_cycle ?? "monthly");
   const [payAmount, setPayAmount] = useState("");
   const [payRef, setPayRef] = useState("");
   const [paidUntil, setPaidUntil] = useState("");
@@ -1082,7 +1080,7 @@ function BillingPanel({
                 aria-label="Billing cycle"
                 value={payCycle}
                 onChange={(e) => setPayCycle(e.target.value)}
-                options={["monthly", "annual"]}
+                options={["monthly", "quarterly", "annual"]}
               />
               <Input
                 aria-label="Amount received"
