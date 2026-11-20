@@ -396,6 +396,29 @@ export function pauseBilling(tenantId: string, paused: boolean, reason: string):
   });
 }
 
+/**
+ * A plan payment the merchant made outside the hub. Starts or extends the paid
+ * period. `transfer_reference` is the reference printed on the receipt: one
+ * transfer is recorded once. `paid_until` (YYYY-MM-DD) is the last day covered;
+ * left out, the period is one cycle on from the renewal date, or from now.
+ */
+export function recordPayment(
+  tenantId: string,
+  body: {
+    plan: string;
+    billing_cycle: string;
+    amount_cents: number;
+    transfer_reference: string;
+    paid_until?: string;
+    reason: string;
+  },
+): Promise<unknown> {
+  return apiClient(`/admin/merchants/${tenantId}/record-payment`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
 export function refundInvoice(
   tenantId: string,
   invoiceId: string,
