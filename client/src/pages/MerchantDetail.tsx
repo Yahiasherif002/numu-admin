@@ -15,8 +15,9 @@
  *
  * A second call (`/admin/merchants/{tenant}/insights`) feeds the rest: store
  * health, API and WhatsApp usage, invoices, support cases and the staff
- * timeline. Billing controls (extend trial, pause billing, credit, refund)
- * sit on the Billing tab, each confirmed with a reason for the audit log.
+ * timeline. Billing controls (extend trial, record a plan payment, pause
+ * billing, credit, refund) sit on the Billing tab, each confirmed with a
+ * reason for the audit log.
  */
 
 import DashboardLayout from "@/components/DashboardLayout";
@@ -59,6 +60,7 @@ import {
   getMerchantDetail,
   getMerchantInsights,
   pauseBilling,
+  recordPayment,
   refundInvoice,
   toggleMerchantInternal,
   updateMerchantStatus,
@@ -91,6 +93,7 @@ const LIFECYCLE_STATUS: Record<string, NumuStatus> = {
   active: "active",
   trial: "trial",
   demo: "draft",
+  past_due: "past_due",
   read_only: "past_due",
   cancelled: "churned",
 };
@@ -598,6 +601,7 @@ function ControlsCard({ d, storeId }: { d: MerchantDetailData; storeId: string }
       consequences: [
         `${currentPlan || "No plan"} → ${plan}. Limits and features follow the new plan immediately.`,
         "No charge or refund is made — billing is not touched.",
+        "No paid period starts, so this plan never comes up for renewal. If the merchant paid for it, use Billing → Record payment instead.",
       ],
       label: "Change plan",
     },
@@ -824,6 +828,7 @@ function UsageCard({ insights, loading }: { insights?: MerchantInsights; loading
 
 type BillingAction =
   | { kind: "extend" }
+  | { kind: "record" }
   | { kind: "pause" }
   | { kind: "credit" }
   | { kind: "refund"; invoice: Invoice };
@@ -835,7 +840,7 @@ const INVOICE_STATUS: Record<string, NumuStatus> = {
   void: "cancelled",
 };
 
-/** Extend trial, pause/resume billing, credit the wallet, refund an invoice. */
+/** Extend trial, record a plan payment, pause/resume billing, credit the wallet, refund an invoice. */
 function BillingPanel({
   d,
   storeId,
@@ -860,10 +865,27 @@ function BillingPanel({
   const dayCount = Number(days);
   const creditCents = parseMoney(amount);
   const currency = d.wallet?.currency ?? "EGP";
+  const [payPlan, setPayPlan] = useState(d.tenant?.plan === "pro" ? "pro" : "starter");
+  const [payCycle, setPayCycle] = useState(d.tenant?.billing_cycle ?? "monthly");
+  const [payAmount, setPayAmount] = useState("");
+  const [payRef, setPayRef] = useState("");
+  const [paidUntil, setPaidUntil] = useState("");
+  const payCents = parseMoney(payAmount);
+  // Same shape the API accepts: the reference as printed on the receipt.
+  const payRefOk = /^[A-Za-z0-9._/-]{3,32}$/.test(payRef.trim());
 
   const run = useMutation({
     mutationFn: (a: BillingAction): Promise<unknown> => {
       if (a.kind === "extend") return extendTrial(tenantId, dayCount, reason.trim());
+      if (a.kind === "record")
+        return recordPayment(tenantId, {
+          plan: payPlan,
+          billing_cycle: payCycle,
+          amount_cents: payCents!,
+          transfer_reference: payRef.trim(),
+          paid_until: paidUntil || undefined,
+          reason: reason.trim(),
+        });
       if (a.kind === "pause") return pauseBilling(tenantId, !paused, reason.trim());
       if (a.kind === "credit") return adjustWallet(tenantId, creditCents!, reason.trim());
       return refundInvoice(tenantId, a.invoice.id, reason.trim());
@@ -877,17 +899,24 @@ function BillingPanel({
         toast.success(
           a.kind === "extend"
             ? `Trial extended by ${dayCount} days`
-            : a.kind === "pause"
-              ? paused
-                ? "Billing resumed"
-                : "Billing paused"
-              : `Credited ${formatMoney(creditCents, currency)}`,
+            : a.kind === "record"
+              ? `Recorded ${formatMoney(payCents, "EGP")} for ${payPlan}`
+              : a.kind === "pause"
+                ? paused
+                  ? "Billing resumed"
+                  : "Billing paused"
+                : `Credited ${formatMoney(creditCents, currency)}`,
           { description: `${d.store.name} · recorded in the audit log` },
         );
       }
       setAction(null);
       setReason("");
       if (a.kind === "credit") setAmount("");
+      if (a.kind === "record") {
+        setPayAmount("");
+        setPayRef("");
+        setPaidUntil("");
+      }
       void queryClient.invalidateQueries({ queryKey: ["merchant-insights", tenantId] });
       void queryClient.invalidateQueries({ queryKey: ["merchant-detail", storeId] });
       void queryClient.invalidateQueries({ queryKey: ["admin-wallets"] });
@@ -911,6 +940,20 @@ function BillingPanel({
         ],
         label: "Extend trial",
       };
+    if (a.kind === "record")
+      return {
+        title: `Record ${formatMoney(payCents, "EGP")} for ${payPlan} (${payCycle})?`,
+        consequences: [
+          paidUntil
+            ? `The plan is active and paid through ${paidUntil}.`
+            : "The plan is active for one cycle, counted from its renewal date if that is still ahead or the merchant is past due, otherwise from now.",
+          `Transfer ${payRef.trim()} can be recorded once for this merchant.`,
+          "A paid invoice is written and the payment shows on the merchant's Billing page.",
+          "When the paid period ends the merchant is asked to renew from the hub, then the store is suspended once the grace window is over (3 days by default).",
+          "No money moves: record only what you have received.",
+        ],
+        label: "Record payment",
+      };
     if (a.kind === "pause")
       return paused
         ? {
@@ -926,6 +969,7 @@ function BillingPanel({
             consequences: [
               "No renewal charge, retry, past-due state or dunning email while paused.",
               "A trial does not expire and a read-only store is not deleted while paused.",
+              "A past-due store is not suspended while paused: its countdown stops, and resuming starts a new grace window.",
               "A store that is already read-only stays locked. Pre-expiry reminder emails still go out.",
             ],
             label: "Pause billing",
@@ -1015,6 +1059,60 @@ function BillingPanel({
                 onClick={() => setAction({ kind: "extend" })}
               >
                 Extend trial
+              </Button>
+            </span>
+          </div>
+          <div className="ak-row-line">
+            <span>
+              Plan payment received outside the hub
+              {billing?.next_renewal_at
+                ? ` · paid until ${formatDateTime(billing.next_renewal_at)}`
+                : " · no paid period"}
+            </span>
+            <span className="ak-cell-line" style={{ flexWrap: "wrap", justifyContent: "flex-end" }}>
+              <Select
+                aria-label="Plan paid for"
+                value={payPlan}
+                onChange={(e) => setPayPlan(e.target.value)}
+                options={["starter", "pro"]}
+              />
+              <Select
+                aria-label="Billing cycle"
+                value={payCycle}
+                onChange={(e) => setPayCycle(e.target.value)}
+                options={["monthly", "quarterly", "annual"]}
+              />
+              <Input
+                aria-label="Amount received"
+                inputMode="decimal"
+                numeric
+                affix="EGP"
+                placeholder="0.00"
+                value={payAmount}
+                onChange={(e) => setPayAmount(e.target.value)}
+              />
+              <Input
+                aria-label="Transfer reference"
+                title="The reference printed on the receipt"
+                mono
+                placeholder="Transfer ref"
+                value={payRef}
+                onChange={(e) => setPayRef(e.target.value)}
+              />
+              <Input
+                aria-label="Paid through (optional)"
+                title="Last day the payment covers (optional)"
+                type="date"
+                value={paidUntil}
+                onChange={(e) => setPaidUntil(e.target.value)}
+              />
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={payCents == null || payCents < 0 || !payRefOk}
+                onClick={() => setAction({ kind: "record" })}
+              >
+                Record payment
               </Button>
             </span>
           </div>

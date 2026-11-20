@@ -11,6 +11,9 @@
  *   - **Lifecycle** — pre-expiry warning windows (trial ending / renewal
  *     upcoming, with a master email switch) and the dunning ladder
  *     (retries / backoff / window before read-only).
+ *   - **Offer** — one time-boxed price offer (Black Friday): what a three-month
+ *     or a yearly payment costs while it runs. The catalogue prices stay as
+ *     they are, so the offer ends by itself.
  *
  * Cloned from WalletAdmin.tsx — same card/dialog/react-query shape,
  * same per-row `actingId` tracking.
@@ -56,11 +59,15 @@ import {
 } from "@/services/walletAdminApi";
 import {
   approveSubscriptionProof,
+  endBillingOffer,
   getBillingLifecycleSettings,
+  getBillingOffer,
   listSubscriptionProofs,
   rejectSubscriptionProof,
+  saveBillingOffer,
   updateBillingLifecycleSettings,
   type BillingLifecycleSettings,
+  type BillingOfferState,
   type SubscriptionProofItem,
   type SubscriptionProofStatus,
 } from "@/services/subscriptionPaymentsAdminApi";
@@ -78,6 +85,7 @@ import {
   RotateCcw,
   Save,
   ShieldAlert,
+  Tag,
   X,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -620,21 +628,21 @@ const LIFECYCLE_NUMBER_FIELDS: {
   {
     key: "dunning_max_retries",
     label: "Dunning: max retries",
-    hint: "Failed renewal attempts before the store goes read-only.",
+    hint: "The store is never suspended before this many renewal attempts.",
     min: 1,
     max: 10,
   },
   {
     key: "dunning_retry_backoff_hours",
     label: "Dunning: retry backoff (hours)",
-    hint: "Gap between renewal retry attempts.",
+    hint: "Gap between renewal attempts. A saved card is retried; a merchant with no card gets a reminder.",
     min: 1,
     max: 168,
   },
   {
     key: "dunning_window_hours",
-    label: "Dunning: minimum window (hours)",
-    hint: "Read-only can't trigger before this much time since subscription start.",
+    label: "Dunning: grace window (hours)",
+    hint: "Time to pay after a renewal could not be collected, before the store is suspended. The hub counts it down.",
     min: 0,
     max: 720,
   },
@@ -825,9 +833,12 @@ function LifecycleTab() {
           </CardTitle>
           <CardDescription>
             What happens when a renewal can't be collected (no saved card,
-            or the card declined): retries with backoff, then the store goes
-            read-only. A dunning email pointing at card/InstaPay fires on
-            every failed try.
+            or the card declined): the merchant gets a grace window, shown
+            as a countdown in the hub, and the store is suspended when it
+            ends. The window is the longer of the grace window below and
+            (retries − 1) × backoff. The merchant gets an email and a hub
+            notification when the window starts, at every attempt after
+            that, and when the store is suspended.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -867,6 +878,235 @@ function LifecycleTab() {
   );
 }
 
+// ─── Offer tab ───────────────────────────────────────────────────────────────
+
+const OFFER_CYCLES: { key: string; label: string }[] = [
+  { key: "quarterly", label: "3 months" },
+  { key: "annual", label: "1 year" },
+];
+
+/** Local calendar day of an ISO datetime, for a date input. */
+const dayOf = (iso: string) => {
+  const d = new Date(iso);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+};
+
+interface OfferDraft {
+  name_en: string;
+  name_ar: string;
+  from: string;
+  to: string;
+  /** "plan.cycle" -> EGP as typed; empty means that cycle is not on offer. */
+  egp: Record<string, string>;
+}
+
+function draftOf(state: BillingOfferState): OfferDraft {
+  const o = state.offer;
+  const egp: Record<string, string> = {};
+  for (const [plan, cycles] of Object.entries(o?.prices ?? {})) {
+    for (const [cycle, piasters] of Object.entries(cycles)) {
+      egp[`${plan}.${cycle}`] = String(piasters / 100);
+    }
+  }
+  return {
+    name_en: o?.name_en ?? "Black Friday",
+    name_ar: o?.name_ar ?? "بلاك فرايداي",
+    from: o ? dayOf(o.starts_at) : dayOf(new Date().toISOString()),
+    to: o ? dayOf(o.ends_at) : "",
+    egp,
+  };
+}
+
+function OfferTab() {
+  const queryClient = useQueryClient();
+  const offerQuery = useQuery({ queryKey: ["billing-offer"], queryFn: getBillingOffer });
+  const [draft, setDraft] = useState<OfferDraft | null>(null);
+
+  useEffect(() => {
+    if (offerQuery.data) setDraft(draftOf(offerQuery.data));
+  }, [offerQuery.data]);
+
+  const done = (message: string) => (state: BillingOfferState) => {
+    toast.success(message);
+    queryClient.setQueryData(["billing-offer"], state);
+  };
+  const failed = (err: unknown) => toast.error(err instanceof Error ? err.message : String(err));
+
+  const saveMutation = useMutation({
+    mutationFn: (d: OfferDraft) => {
+      const prices: Record<string, Record<string, number>> = {};
+      for (const [key, typed] of Object.entries(d.egp)) {
+        const [plan, cycle] = key.split(".");
+        const egp = Number(typed);
+        if (typed.trim() && Number.isFinite(egp) && egp > 0) {
+          (prices[plan] ??= {})[cycle] = Math.round(egp * 100);
+        }
+      }
+      return saveBillingOffer({
+        name_en: d.name_en.trim(),
+        name_ar: d.name_ar.trim(),
+        // The staff member's own days: from the first minute of one to the
+        // last second of the other.
+        starts_at: new Date(`${d.from}T00:00:00`).toISOString(),
+        ends_at: new Date(`${d.to}T23:59:59`).toISOString(),
+        prices,
+      });
+    },
+    onSuccess: done("Offer saved"),
+    onError: failed,
+  });
+  const endMutation = useMutation({
+    mutationFn: endBillingOffer,
+    onSuccess: done("Offer ended"),
+    onError: failed,
+  });
+
+  if (offerQuery.isError) {
+    return (
+      <Card className="border-destructive/40 bg-destructive/5">
+        <CardContent className="pt-6 flex items-start gap-3">
+          <ShieldAlert className="h-5 w-5 text-destructive shrink-0" />
+          <p className="text-sm">
+            {offerQuery.error instanceof Error ? offerQuery.error.message : "Unknown error"}
+          </p>
+        </CardContent>
+      </Card>
+    );
+  }
+  if (!offerQuery.data || !draft) {
+    return <Card className="h-64 animate-pulse bg-muted/30" />;
+  }
+
+  const { offer, running, list_prices } = offerQuery.data;
+  const status = !offer
+    ? "No offer"
+    : running
+      ? "Running"
+      : new Date(offer.ends_at) <= new Date()
+        ? "Ended"
+        : "Scheduled";
+  const hasPrice = Object.values(draft.egp).some((v) => v.trim());
+  const ready = Boolean(
+    draft.name_en.trim() && draft.name_ar.trim() && draft.from && draft.to && hasPrice,
+  );
+  const busy = saveMutation.isPending || endMutation.isPending;
+
+  return (
+    <div className="max-w-2xl space-y-4">
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base flex items-center gap-2">
+            <Tag className="h-4 w-4 text-primary" />
+            Price offer
+            <Badge variant={running ? "default" : "outline"}>{status}</Badge>
+          </CardTitle>
+          <CardDescription>
+            What a plan payment started from the hub costs while the offer runs.
+            The catalogue prices do not change, so the offer ends by itself on
+            its last day, and a merchant's next period is back at the list
+            price. The hub shows the offer on the Billing page with the list
+            price next to it.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1">
+              <Label className="text-sm">Name (English)</Label>
+              <Input
+                className="h-9"
+                value={draft.name_en}
+                onChange={(e) => setDraft({ ...draft, name_en: e.target.value })}
+              />
+            </div>
+            <div className="space-y-1">
+              <Label className="text-sm">Name (Arabic)</Label>
+              <Input
+                dir="rtl"
+                className="h-9"
+                value={draft.name_ar}
+                onChange={(e) => setDraft({ ...draft, name_ar: e.target.value })}
+              />
+            </div>
+            <div className="space-y-1">
+              <Label className="text-sm">First day</Label>
+              <Input
+                type="date"
+                className="h-9"
+                value={draft.from}
+                onChange={(e) => setDraft({ ...draft, from: e.target.value })}
+              />
+            </div>
+            <div className="space-y-1">
+              <Label className="text-sm">Last day</Label>
+              <Input
+                type="date"
+                className="h-9"
+                value={draft.to}
+                onChange={(e) => setDraft({ ...draft, to: e.target.value })}
+              />
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            <Label className="text-sm">Offer prices (EGP)</Label>
+            {Object.keys(list_prices).map((plan) => (
+              <div key={plan} className="grid grid-cols-3 items-start gap-3">
+                <p className="pt-2 text-sm font-medium">{PLAN_LABEL[plan] ?? plan}</p>
+                {OFFER_CYCLES.map((c) => {
+                  const key = `${plan}.${c.key}`;
+                  return (
+                    <div key={key} className="space-y-1">
+                      <Input
+                        aria-label={`${PLAN_LABEL[plan] ?? plan} ${c.label}`}
+                        inputMode="decimal"
+                        className="h-9 tabular-nums"
+                        placeholder={c.label}
+                        value={draft.egp[key] ?? ""}
+                        onChange={(e) =>
+                          setDraft({ ...draft, egp: { ...draft.egp, [key]: e.target.value } })
+                        }
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        {c.label}, list {fmtEGP(list_prices[plan]?.[c.key])}
+                      </p>
+                    </div>
+                  );
+                })}
+              </div>
+            ))}
+            <p className="text-xs text-muted-foreground">
+              Leave a price empty to keep that plan and cycle at its list price.
+              An offer price has to be below the list price.
+            </p>
+          </div>
+
+          <div className="flex justify-end gap-2">
+            {offer && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => endMutation.mutate()}
+                disabled={busy}
+              >
+                End offer now
+              </Button>
+            )}
+            <Button size="sm" onClick={() => saveMutation.mutate(draft)} disabled={!ready || busy}>
+              {saveMutation.isPending ? (
+                <Loader2 className="h-3.5 w-3.5 me-1.5 animate-spin" />
+              ) : (
+                <Save className="h-3.5 w-3.5 me-1.5" />
+              )}
+              Save offer
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
 // ─── Page ────────────────────────────────────────────────────────────────────
 
 export default function SubscriptionPayments() {
@@ -890,6 +1130,7 @@ export default function SubscriptionPayments() {
             { id: "review", label: "Review queue", icon: "clipboard" },
             { id: "plans", label: "Plans and features", icon: "layout" },
             { id: "lifecycle", label: "Lifecycle", icon: "bell" },
+            { id: "offer", label: "Offer", icon: "tag" },
           ]}
           active={tab}
           onChange={setTab}
@@ -908,6 +1149,7 @@ export default function SubscriptionPayments() {
           </>
         )}
         {tab === "lifecycle" && <LifecycleTab />}
+        {tab === "offer" && <OfferTab />}
       </div>
     </DashboardLayout>
   );
